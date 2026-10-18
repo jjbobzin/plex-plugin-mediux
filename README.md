@@ -2,19 +2,46 @@
 
 Automatic [Mediux](https://mediux.pro) artwork for Plex: movie and show posters,
 backgrounds, logos, season posters and episode title cards, chosen by your
-preferred creators.
+preferred Mediux creators.
 
 It runs as a custom Plex metadata provider (Plex Media Server 1.43 or newer).
 Plex Movie and Plex Series stay in charge of matching, titles, summaries and
-watch history; this provider only supplies the artwork.
+watch history; this provider only supplies the artwork. Anything Mediux has no
+artwork for keeps Plex's normal artwork.
 
-**Status: early development, not usable yet.** See [PLAN.md](PLAN.md) for the
-design and what has been tested so far. `test-provider/` holds the throwaway
-provider used to prove the idea works.
+**Status: early testing.** See [PLAN.md](PLAN.md) for the design and what has
+been tested so far.
+
+## Install
+
+1. **Run the container.** Use [docker-compose.yml](docker-compose.yml) as is,
+   for example as a new stack in Dockhand or Portainer. It publishes port
+   `32600` and keeps its settings in `/mnt/user/appdata/plex-plugin-mediux`
+   (change the left side of the volume if you are not on Unraid).
+2. **Open the settings page** at `http://<server-ip>:32600` and paste your
+   Mediux API token (from your account settings on mediux.pro). Choose your
+   creators and artwork options, then save. Nothing is configured through
+   environment variables or files.
+3. **Add the providers in Plex:** Settings → Metadata Agents → Add Provider,
+   once with `http://<server-ip>:32600/movies` and once with
+   `http://<server-ip>:32600/tv`.
+4. **Create an agent for each:** pick **Plex Movie** (or **Plex Series**) as
+   the Primary, add **Mediux Artwork**, and drag it to the top so its artwork
+   wins. The Primary cannot be changed after the agent is created.
+5. **Use the agent** for a library (library → Edit → Advanced → Agent) and
+   refresh. Try it on a small test library first.
+
+Plex reads the movie or show ID from TMDB/TVDB tags in file names, such as
+`{tmdb-291870}` from Radarr or Sonarr naming. Without a tag it falls back to
+an exact title and year match.
+
+The settings page also has a **Try it** preview, to see what your settings
+pick for any title, and a **Recent activity** list of what Plex asked for.
 
 ## Credits
 
-Inspired by [Pukabyte's Mediux plugin for Silo](https://github.com/Pukabyte/silo-plugin-mediux).
+Artwork selection is adapted from
+[Pukabyte's Mediux plugin for Silo](https://github.com/Pukabyte/silo-plugin-mediux).
 Not affiliated with Mediux or Plex.
 
 ## License
