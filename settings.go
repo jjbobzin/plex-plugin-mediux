@@ -44,6 +44,10 @@ type settings struct {
 	DiscordWebhook string       `json:"discord_webhook"`
 	NotifyUpdates  bool         `json:"notify_updates"`   // new or changed artwork found by the watcher
 	NotifyNewItems bool         `json:"notify_new_items"` // a newly added title got Mediux artwork
+
+	// When you pick a set on the Sets tab, also replace artwork that is
+	// locked in Plex (uploaded by AURA, Kometa or by hand).
+	ReplaceLocked bool `json:"replace_locked"`
 }
 
 // plexServer is a Plex Media Server the provider may ask to refresh items.

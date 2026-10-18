@@ -128,6 +128,8 @@ func fakeMediux(t *testing.T) *httptest.Server {
 				map[string]any{"id": "1", "title": "Dirty Grandpa Returns", "release_date": "2030-01-01"},
 				map[string]any{"id": "291870", "title": "Dirty Grandpa", "release_date": "2016-01-22"},
 			}}
+		case strings.Contains(body.Query, "exact:shows"):
+			data = map[string]any{"exact": []any{}, "near": []any{}}
 		case strings.Contains(body.Query, "contributors"):
 			data = map[string]any{"contributors": []any{map[string]any{"username": "willtong93"}}}
 		default:
@@ -536,6 +538,7 @@ func TestMissingAuraDatabaseIsHarmless(t *testing.T) {
 type fakePlex struct {
 	mu        sync.Mutex
 	refreshed []string
+	edits     []string // library edit queries, in order
 }
 
 func (f *fakePlex) server(t *testing.T) *httptest.Server {
@@ -550,13 +553,23 @@ func (f *fakePlex) server(t *testing.T) *httptest.Server {
 		case r.URL.Path == "/library/sections":
 			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Directory": []any{
 				map[string]any{"key": "1", "type": "show"}, map[string]any{"key": "2", "type": "artist"}}}})
-		case r.URL.Path == "/library/sections/1/all":
+		case r.Method == http.MethodGet && r.URL.Path == "/library/sections/1/all":
 			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Metadata": []any{
 				map[string]any{"ratingKey": "777", "Guid": []any{map[string]any{"id": "imdb://tt1"}, map[string]any{"id": "tmdb://194764"}}}}}})
 		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/refresh"):
 			f.mu.Lock()
 			f.refreshed = append(f.refreshed, r.URL.Path)
 			f.mu.Unlock()
+		case r.Method == http.MethodPut && r.URL.Path == "/library/sections/1/all":
+			f.mu.Lock()
+			f.edits = append(f.edits, r.URL.RawQuery)
+			f.mu.Unlock()
+		case r.URL.Path == "/library/metadata/777/children":
+			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Metadata": []any{
+				map[string]any{"ratingKey": "801"}, map[string]any{"ratingKey": "802"}}}})
+		case r.URL.Path == "/library/metadata/777/allLeaves":
+			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Metadata": []any{
+				map[string]any{"ratingKey": "901"}, map[string]any{"ratingKey": "902"}, map[string]any{"ratingKey": "903"}}}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -662,5 +675,113 @@ func TestDescribeSlots(t *testing.T) {
 	got := describeSlots([]string{"poster", "s2", "s2e5", "s2e6"})
 	if got != "poster; season posters 2; title cards S2E5, S2E6" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func savePick(t *testing.T, h *harness, body map[string]any) map[string]any {
+	t.Helper()
+	raw, _ := json.Marshal(body)
+	req, _ := http.NewRequest(http.MethodPost, h.server.URL+"/api/picks", strings.NewReader(string(raw)))
+	req.Header.Set("X-Mediux-Settings", "1")
+	return decode(t, mustDo(t, req))
+}
+
+func TestPagePickBeatsAuraAndCreatorPriority(t *testing.T) {
+	path := t.TempDir() + "/AURA.db"
+	writeAuraDB(t, path)
+	h := newHarness(t, func(s *settings) {
+		s.AuraDB = path
+		s.TitlecardConsistency, s.MissingArtwork = modeMostComplete, "KeepExisting"
+		s.SeasonConsistency = modeCreatorPriority // rules alone would say willtong93's set
+	})
+	// AURA pinned set-a's poster; pick MrMagixx's set-c on the page. He is
+	// excluded, but a set you pick yourself still applies.
+	savePick(t, h, map[string]any{"type": "movie", "tmdb": "291870", "title": "Dirty Grandpa", "poster_set": "set-c"})
+	movie := metadata(t, h.get(t, "/movies/library/metadata/tmdb-291870"))[0]
+	if assetOf(movie["thumb"]) != uuid(6) {
+		t.Errorf("page pick should win over AURA: %v", movie["thumb"])
+	}
+
+	// Title cards: the rules would take the complete set, AURA pinned S1E1
+	// from it too; the page pick is willtong93's partial set.
+	savePick(t, h, map[string]any{"type": "show", "tmdb": "194764", "title": "1923", "titlecard_set": "favourite"})
+	s1 := metadata(t, h.get(t, "/tv/library/metadata/tmdb-194764-s1?includeChildren=1"))[0]
+	eps := s1["Children"].(map[string]any)["Metadata"].([]any)
+	if got := assetOf(eps[0].(map[string]any)["thumb"]); got != uuid(22) {
+		t.Errorf("S1E1 should come from the picked set, got %v", got)
+	}
+	// Season 2 isn't in the picked set: it follows the rules (complete set).
+	s2 := metadata(t, h.get(t, "/tv/library/metadata/tmdb-194764-s2?includeChildren=1"))[0]
+	e := s2["Children"].(map[string]any)["Metadata"].([]any)[0].(map[string]any)
+	if assetOf(e["thumb"]) != uuid(16) {
+		t.Errorf("S2E1 should fall back to the rules, got %v", e["thumb"])
+	}
+
+	// The Sets tab lists every set and shows the saved pick.
+	sets := h.get(t, "/api/sets?type=show&q=194764")
+	if n := len(sets["sets"].([]any)); n != 2 {
+		t.Errorf("want 2 sets listed, got %d", n)
+	}
+	if sets["pick"].(map[string]any)["titlecard_set"] != "favourite" {
+		t.Errorf("saved pick not reported: %v", sets["pick"])
+	}
+
+	// With AURA pinning the S1 season poster from the complete set, the page
+	// reports that set as the one in use for season posters.
+	if auto := sets["auto"].(map[string]any); auto["season_set"] != "complete" {
+		t.Errorf("AURA's season set should show as in use: %v", auto)
+	}
+
+	// Clearing every part removes the pick.
+	savePick(t, h, map[string]any{"type": "show", "tmdb": "194764"})
+	if items := h.get(t, "/api/picks")["items"].([]any); len(items) != 1 {
+		t.Errorf("only the movie pick should remain, got %v", items)
+	}
+}
+
+func TestSavingAPickUnlocksAndRefreshesPlex(t *testing.T) {
+	fp := &fakePlex{}
+	plexSrv := fp.server(t)
+	h := newHarness(t, func(s *settings) {
+		s.PlexServers = []plexServer{{Name: "Unlimited-Primary", URL: plexSrv.URL, Token: "plex-token"}}
+		s.ReplaceLocked = true
+	})
+	savePick(t, h, map[string]any{"type": "show", "tmdb": "194764", "title": "1923", "season_set": "favourite"})
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		fp.mu.Lock()
+		done := len(fp.refreshed) > 0
+		fp.mu.Unlock()
+		if done || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	fp.mu.Lock()
+	refreshed, edits := append([]string(nil), fp.refreshed...), append([]string(nil), fp.edits...)
+	fp.edits = nil
+	fp.mu.Unlock()
+	if len(refreshed) != 1 || refreshed[0] != "/library/metadata/777/refresh" {
+		t.Fatalf("refreshes: %v", refreshed)
+	}
+	all := strings.Join(edits, "\n")
+	for _, want := range []string{"type=2", "id=777", "thumb.locked=0", "label%5B%5D.tag.tag-=Overlay",
+		"type=3", "id=801%2C802", "type=4", "id=901%2C902%2C903"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("unlock edits missing %q in:\n%s", want, all)
+		}
+	}
+	// Without the option, nothing is unlocked.
+	s := h.store.get()
+	s.ReplaceLocked = false
+	_ = h.store.save(s)
+	if _, err := h.app.plexAPI.refresh(context.Background(), s.PlexServers, typeShow, "194764", false); err != nil {
+		t.Fatal(err)
+	}
+	fp.mu.Lock()
+	edits = append([]string(nil), fp.edits...)
+	fp.mu.Unlock()
+	if len(edits) != 0 {
+		t.Errorf("nothing should be unlocked without the option: %v", edits)
 	}
 }

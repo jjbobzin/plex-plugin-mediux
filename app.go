@@ -23,7 +23,8 @@ func newApp(store *settingsStore, configDir string) *app {
 	a.mediux = newMediuxClient(store)
 	a.ids = newIdentifier(a.mediux)
 	aura := newAuraStore(func() string { return store.get().AuraDB })
-	a.provider = &plexProvider{mediux: a.mediux, ids: a.ids, settings: store, activity: a.activity, aura: aura}
+	a.provider = &plexProvider{mediux: a.mediux, ids: a.ids, settings: store, activity: a.activity, aura: aura,
+		picks: loadPicks(configDir)}
 	a.watch = newWatcher(a.provider, a.plexAPI, a.discord, configDir)
 	a.provider.watch = a.watch
 	ui := &webUI{settings: store, provider: a.provider, plex: a.plexAPI, discord: a.discord, activity: a.activity,

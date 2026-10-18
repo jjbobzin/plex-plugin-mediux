@@ -72,12 +72,15 @@ func newWatcher(p *plexProvider, plex *plexClient, d *discord, dir string) *watc
 }
 
 // basis fingerprints everything on our side that decides which art is picked.
-func basis(cfg settings, pin *auraPin) string {
+func basis(cfg settings, o override) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%q|%q|%v|%s|%s|%s|", cfg.PriorityCreators, cfg.ExcludedCreators, cfg.OnlyPriority,
 		cfg.SeasonConsistency, cfg.TitlecardConsistency, cfg.MissingArtwork)
-	if pin != nil {
-		fmt.Fprintf(h, "%s|%s|%v|%v", pin.Poster, pin.Backdrop, pin.Seasons, pin.Cards)
+	if pin := o.aura; pin != nil {
+		fmt.Fprintf(h, "%s|%s|%v|%v|", pin.Poster, pin.Backdrop, pin.Seasons, pin.Cards)
+	}
+	if p := o.pick; p != nil {
+		fmt.Fprintf(h, "%s|%s|%s|%s", p.PosterSet, p.BackSet, p.SeasonSet, p.CardSet)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
@@ -86,16 +89,16 @@ func slot(c choice) string {
 	return c.art.ID + "@" + c.art.Modified.UTC().Format("20060102150405")
 }
 
-func movieSignature(b bundle, cfg settings, language string, pin *auraPin) map[string]string {
+func movieSignature(b bundle, cfg settings, language string, o override) map[string]string {
 	sig := map[string]string{}
-	poster := choosePoster(b, cfg, language, pin)
+	poster := choosePoster(b, cfg, language, o)
 	if poster.ok {
 		sig["poster"] = slot(poster)
 	}
-	if c := chooseWithPoster(b, cfg, kindBackdrop, language, poster, pin.backdropID()); c.ok {
+	if c := chooseWithPoster(b, cfg, kindBackdrop, language, poster, o); c.ok {
 		sig["background"] = slot(c)
 	}
-	if c := chooseWithPoster(b, cfg, kindLogo, language, poster, ""); c.ok {
+	if c := chooseWithPoster(b, cfg, kindLogo, language, poster, o); c.ok {
 		sig["logo"] = slot(c)
 	}
 	return sig
@@ -269,7 +272,7 @@ func (w *watcher) checkOne(ctx context.Context, it trackedItem, cfg settings) bo
 	w.p.mediux.forget(it.Type, it.TMDB)
 	pr := &plexRequest{language: it.Language}
 	var sig map[string]string
-	var pin *auraPin
+	var ov override
 	var posterURL string
 	if it.Type == typeMovie {
 		b, err := w.p.mediux.artwork(ctx, typeMovie, it.TMDB)
@@ -277,9 +280,9 @@ func (w *watcher) checkOne(ctx context.Context, it trackedItem, cfg settings) bo
 			w.markChecked(key)
 			return false
 		}
-		pin = w.p.aura.pin(typeMovie, it.TMDB)
-		sig = movieSignature(b, cfg, it.Language, pin)
-		if c := choosePoster(b, cfg, it.Language, pin); c.ok {
+		ov = w.p.overrides(typeMovie, it.TMDB)
+		sig = movieSignature(b, cfg, it.Language, ov)
+		if c := choosePoster(b, cfg, it.Language, ov); c.ok {
 			posterURL = imageURL(c.art, "optimized")
 		}
 	} else {
@@ -288,12 +291,12 @@ func (w *watcher) checkOne(ctx context.Context, it trackedItem, cfg settings) bo
 			w.markChecked(key)
 			return false
 		}
-		pin, sig = sh.pin, sh.signature()
+		ov, sig = sh.ov, sh.signature()
 		if c := sh.poster(); c.ok {
 			posterURL = imageURL(c.art, "optimized")
 		}
 	}
-	base := basis(cfg, pin)
+	base := basis(cfg, ov)
 
 	w.mu.Lock()
 	cur := w.items[key]
@@ -315,7 +318,7 @@ func (w *watcher) checkOne(ctx context.Context, it trackedItem, cfg settings) bo
 	what := describeSlots(changed)
 	footer := "Plex refresh is off"
 	if cfg.RefreshPlex {
-		asked, err := w.plex.refresh(ctx, cfg.PlexServers, it.Type, it.TMDB)
+		asked, err := w.plex.refresh(ctx, cfg.PlexServers, it.Type, it.TMDB, false)
 		switch {
 		case len(asked) > 0:
 			footer = "Refreshed in Plex: " + strings.Join(unique(asked), ", ")

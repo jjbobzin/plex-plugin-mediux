@@ -670,3 +670,22 @@ func (c *mediuxClient) showStructure(ctx context.Context, tmdbID string) (map[in
 	structureMu.Unlock()
 	return seasons, err
 }
+
+// titleOf returns a movie or show's name and year as Mediux lists it.
+func (c *mediuxClient) titleOf(ctx context.Context, typ mediaType, tmdbID string) (string, int) {
+	field, date := "movies_by_id", "release_date"
+	if typ == typeShow {
+		field, date = "shows_by_id", "first_air_date"
+	}
+	var out map[string]*struct {
+		Title string `json:"title"`
+		Movie string `json:"release_date"`
+		Show  string `json:"first_air_date"`
+	}
+	q := "query($id: ID!){" + field + "(id:$id){title " + date + "}}"
+	if err := c.query(ctx, "title lookup", q, map[string]any{"id": tmdbID}, &out); err != nil || out[field] == nil {
+		return "", 0
+	}
+	t := out[field]
+	return t.Title, yearOf(t.Movie + t.Show)
+}

@@ -41,6 +41,9 @@ func (ui *webUI) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/test-discord", ui.guard(ui.testDiscord))
 	mux.HandleFunc("POST /api/test-plex", ui.guard(ui.testPlex))
 	mux.HandleFunc("POST /api/check-now", ui.guard(ui.checkNow))
+	mux.HandleFunc("GET /api/sets", ui.sets)
+	mux.HandleFunc("GET /api/picks", ui.listPicks)
+	mux.HandleFunc("POST /api/picks", ui.guard(ui.savePick))
 	mux.HandleFunc("GET /img/{id}", ui.relayImage)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 }
@@ -296,45 +299,53 @@ type previewImage struct {
 
 func previewOf(label string, c choice) previewImage {
 	creator := c.art.Creator
-	if c.aura {
+	switch c.source {
+	case "pick":
+		creator += " · your pick"
+	case "aura":
 		creator += " · AURA pick"
 	}
 	return previewImage{label, imageURL(c.art, "optimized"), creator}
+}
+
+// resolve turns what was typed (a title, "Title (Year)" or a TMDB ID) into a
+// TMDB ID. Titles come first: shows like "1923" or "24" are numbers, so a
+// number with no exact title match is treated as a TMDB ID. A non-zero status
+// means it failed, with msg to show.
+func (ui *webUI) resolve(ctx context.Context, kind, q string) (tmdb, how string, status int, msg string) {
+	if q == "" || (kind != "movie" && kind != "show") {
+		return "", "", 400, "Enter a title or TMDB ID."
+	}
+	title, year := splitYear(q, 0)
+	h := hints{Title: title, Year: year}
+	var err error
+	if kind == "movie" {
+		tmdb, how, err = ui.provider.ids.movie(ctx, h)
+	} else {
+		tmdb, how, err = ui.provider.ids.show(ctx, q, h)
+	}
+	if err != nil {
+		return "", "", 502, err.Error()
+	}
+	if tmdb == "" {
+		if numericID(q) {
+			return q, "TMDB ID", 0, ""
+		}
+		return "", "", 404, "No exact title match. Try the title with its year, like \"1923 (2022)\", or the TMDB ID."
+	}
+	return tmdb, how, 0, ""
 }
 
 // preview shows what would be chosen for a movie or show, without Plex.
 func (ui *webUI) preview(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	kind := r.URL.Query().Get("type")
-	if q == "" || (kind != "movie" && kind != "show") {
-		writeJSON(w, 400, map[string]string{"error": "Enter a title or TMDB ID."})
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	// Titles come first: shows like "1923" or "24" are numbers. A number with
-	// no exact title match is treated as a TMDB ID.
-	var tmdb, how string
-	var err error
-	title, year := splitYear(q, 0)
-	h := hints{Title: title, Year: year}
-	ids := ui.provider.ids
-	if kind == "movie" {
-		tmdb, how, err = ids.movie(ctx, h)
-	} else {
-		tmdb, how, err = ids.show(ctx, q, h)
-	}
-	if err != nil {
-		writeJSON(w, 502, map[string]string{"error": err.Error()})
+	tmdb, how, status, msg := ui.resolve(ctx, kind, q)
+	if status != 0 {
+		writeJSON(w, status, map[string]string{"error": msg})
 		return
-	}
-	if tmdb == "" {
-		if _, numErr := strconv.Atoi(q); numErr == nil {
-			tmdb, how = q, "TMDB ID"
-		} else {
-			writeJSON(w, 404, map[string]string{"error": "No exact title match. Try the title with its year, like \"1923 (2022)\", or the TMDB ID."})
-			return
-		}
 	}
 	cfg := ui.settings.get()
 	images := []previewImage{}
@@ -344,15 +355,15 @@ func (ui *webUI) preview(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 502, map[string]string{"error": err.Error()})
 			return
 		}
-		pin := ui.provider.aura.pin(typeMovie, tmdb)
-		poster := choosePoster(b, cfg, "en", pin)
+		ov := ui.provider.overrides(typeMovie, tmdb)
+		poster := choosePoster(b, cfg, "en", ov)
 		if poster.ok {
 			images = append(images, previewOf("Poster", poster))
 		}
-		if c := chooseWithPoster(b, cfg, kindBackdrop, "en", poster, pin.backdropID()); c.ok {
+		if c := chooseWithPoster(b, cfg, kindBackdrop, "en", poster, ov); c.ok {
 			images = append(images, previewOf("Background", c))
 		}
-		if c := chooseWithPoster(b, cfg, kindLogo, "en", poster, ""); c.ok {
+		if c := chooseWithPoster(b, cfg, kindLogo, "en", poster, ov); c.ok {
 			images = append(images, previewOf("Logo", c))
 		}
 	} else {

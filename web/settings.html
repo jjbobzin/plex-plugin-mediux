@@ -132,8 +132,32 @@
   th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; border-top: none; }
   td.when { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12.5px; white-space: nowrap; background: var(--surface-2); color: var(--muted); }
-  .pill.matched, .pill.new-artwork { background: rgba(74,222,128,.12); color: var(--good); }
+  .pill.matched, .pill.new-artwork, .pill.picked { background: rgba(74,222,128,.12); color: var(--good); }
   .pill.error { background: rgba(248,113,113,.12); color: var(--bad); }
+
+  .setcards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-top: 16px; }
+  .setcard { min-width: 0; background: var(--inset); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .setcard.chosen { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .setcard .head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .setcard .who { font-weight: 700; font-size: 15px; }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
+  .badge.fav { background: var(--accent-soft); color: var(--accent); }
+  .badge.auto { background: rgba(74,222,128,.12); color: var(--good); }
+  .badge.excl { background: rgba(248,113,113,.12); color: var(--bad); }
+  .setcard .main { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+  .setcard .main img { border-radius: 8px; border: 1px solid var(--line); background: #08080b; display: block; }
+  .setcard .main img.p { width: 110px; } .setcard .main img.b { width: 230px; } .setcard .main img.l { width: 150px; padding: 8px; }
+  .strip { display: flex; gap: 8px; overflow-x: auto; padding: 8px 0 4px; scrollbar-width: thin; }
+  .strip figure { margin: 0; flex: none; text-align: center; }
+  .strip img { border-radius: 6px; border: 1px solid var(--line); display: block; background: #08080b; }
+  .strip.seasons img { width: 72px; } .strip.cards img { width: 150px; }
+  .strip figcaption { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+  .striplabel { font-size: 12px; color: var(--muted); margin-top: 8px; text-transform: uppercase; letter-spacing: .05em; }
+  .parts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .parts button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .pickbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; padding: 12px 14px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; }
+  .pickbar .summary { flex: 1; min-width: 200px; color: var(--muted); font-size: 14px; }
+  .pickbar .summary b { color: var(--text); }
 
   .savebar { position: fixed; left: 0; right: 0; bottom: 0; background: rgba(13,14,18,.94); border-top: 1px solid var(--line);
     backdrop-filter: blur(8px); transform: translateY(100%); transition: transform .18s ease; }
@@ -161,6 +185,7 @@
   <div class="wrap">
     <nav class="tabs" role="tablist" aria-label="Sections">
       <button role="tab" data-tab="overview">Overview</button>
+      <button role="tab" data-tab="sets">Sets</button>
       <button role="tab" data-tab="creators">Creators</button>
       <button role="tab" data-tab="artwork">Artwork</button>
       <button role="tab" data-tab="aura">AURA</button>
@@ -220,6 +245,52 @@
         <li>Create an agent with <b>Plex Movie</b> or <b>Plex Series</b> as the <b>Primary</b> (it can't be changed later), add <b>Mediux Artwork</b>, and drag it <b>to the top</b>.</li>
         <li>Pick that agent for a library under <b>Edit → Advanced</b>, then refresh.</li>
       </ol>
+    </div>
+  </section>
+
+  <!-- Sets -->
+  <section class="tab" id="tab-sets" role="tabpanel">
+    <div class="card">
+      <h2>Pick a set</h2>
+      <p class="lead">Choose which Mediux set a movie or show uses, separately for the poster, background, season posters and title cards. Your pick wins over AURA and creator priority. Anything you don't pick follows the usual rules.</p>
+      <div class="row">
+        <select id="setsType" style="width:auto">
+          <option value="show">TV show</option>
+          <option value="movie">Movie</option>
+        </select>
+        <input type="text" id="setsQ" placeholder="Title, title with year, or TMDB ID">
+        <button type="button" class="primary" id="setsBtn">Find sets</button>
+      </div>
+      <p class="msg" id="setsMsg" role="status"></p>
+      <div id="setsResult" hidden>
+        <div class="pickbar">
+          <div class="summary" id="pickSummary"></div>
+          <button type="button" class="ghost" id="pickReset">Undo changes</button>
+          <button type="button" class="danger" id="pickClear">Clear all picks</button>
+          <button type="button" class="primary" id="pickSave">Save picks</button>
+        </div>
+        <p class="msg" id="pickMsg" role="status"></p>
+        <div class="setcards" id="setCards"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>When you save a pick</h2>
+      <p class="lead">With your Plex servers added on Watch &amp; notify, saving a pick asks Plex to refresh that title so the new artwork shows right away.</p>
+      <label class="toggle"><input type="checkbox" id="replaceLocked"><div><b>Replace artwork that's locked in Plex</b><span>Posters uploaded by AURA, Kometa or by hand are locked, so a refresh skips them. With this on, saving a pick unlocks that title's artwork, refreshes it, and clears Kometa's Overlay label so Kometa puts its overlays back on its next run. Note: Kometa re-applies titles it gets from AURA every day, so for those, change the pick in AURA.</span></div></label>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div><h2>Your picks</h2><p class="lead" style="margin:0">Titles you've picked sets for on this page.</p></div>
+        <input type="text" id="picksFilter" placeholder="Filter titles" style="max-width:240px">
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Title</th><th>Type</th><th>Picked</th><th></th></tr></thead>
+          <tbody id="pickRows"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -392,6 +463,7 @@
           <select id="logFilter" style="width:auto">
             <option value="">Everything</option>
             <option value="matched">Matched</option>
+            <option value="picked">Picks</option>
             <option value="new artwork">New artwork</option>
             <option value="no artwork">No artwork</option>
             <option value="not found">Not identified</option>
@@ -461,6 +533,7 @@ function showTab(name) {
   for (const s of document.querySelectorAll("section.tab")) s.classList.toggle("active", s.id === "tab-" + name);
   if (name === "log") loadLog();
   if (name === "aura") loadAura();
+  if (name === "sets") loadPicks();
   history.replaceState(null, "", "#" + name);
 }
 for (const b of tabs) b.onclick = () => showTab(b.dataset.tab);
@@ -497,7 +570,7 @@ function changed() {
   $("savebar").classList.add("show");
   say($("saveMsg"), "You have unsaved changes.");
 }
-for (const id of ["token", "onlyPriority", "quality", "delivery", "cacheHours", "auraDB", "watchHours", "refreshPlex", "discord", "notifyUpdates", "notifyNew"]) {
+for (const id of ["token", "onlyPriority", "quality", "delivery", "cacheHours", "auraDB", "watchHours", "refreshPlex", "discord", "notifyUpdates", "notifyNew", "replaceLocked"]) {
   $(id).addEventListener("input", changed);
   $(id).addEventListener("change", changed);
 }
@@ -525,6 +598,7 @@ function fill(s) {
   $("clearDiscord").hidden = !s.discord_configured;
   $("notifyUpdates").checked = !!s.notify_updates;
   $("notifyNew").checked = !!s.notify_new_items;
+  $("replaceLocked").checked = !!s.replace_locked;
   $("versionLine").textContent = "Artwork provider · " + s.version;
   renderCreators(); renderExcluded(); renderServers();
   dirty = false;
@@ -551,6 +625,7 @@ function collect() {
     clear_discord: clearDiscord,
     notify_updates: $("notifyUpdates").checked,
     notify_new_items: $("notifyNew").checked,
+    replace_locked: $("replaceLocked").checked,
   };
 }
 
@@ -770,6 +845,134 @@ function renderAura() {
 }
 $("auraFilter").addEventListener("input", renderAura);
 
+/* ---------- Sets ---------- */
+const PARTS = [
+  ["poster_set", "Poster"], ["background_set", "Background"],
+  ["season_set", "Season posters"], ["titlecard_set", "Title cards"],
+];
+let setsData = null, staged = null;
+const emptyPick = () => ({ poster_set: "", background_set: "", season_set: "", titlecard_set: "" });
+
+async function findSets(type, q) {
+  $("setsResult").hidden = true;
+  say($("setsMsg"), "Looking up…");
+  say($("pickMsg"), "");
+  try {
+    setsData = await api("/api/sets?type=" + type + "&q=" + encodeURIComponent(q));
+    setsData.sets = setsData.sets || [];
+    staged = Object.assign(emptyPick(), setsData.pick || {});
+    const name = (setsData.title || q) + (setsData.year ? " (" + setsData.year + ")" : "");
+    if (!setsData.sets.length) { say($("setsMsg"), name + ": Mediux has no sets for this title yet."); return; }
+    say($("setsMsg"), name + ": " + plural(setsData.sets.length, "set", "sets") + " on Mediux." +
+      (setsData.aura ? " AURA also has a pick for this title; a pick here wins." : ""), true);
+    renderSets();
+    $("setsResult").hidden = false;
+  } catch (e) { say($("setsMsg"), e.message, false); }
+}
+$("setsBtn").onclick = () => findSets($("setsType").value, $("setsQ").value.trim());
+$("setsQ").addEventListener("keydown", (e) => { if (e.key === "Enter") $("setsBtn").click(); });
+
+function creatorOf(id) { const s = setsData.sets.find((x) => x.id === id); return s ? s.creator : "?"; }
+function renderSummary() {
+  const box = $("pickSummary");
+  box.innerHTML = "";
+  const parts = PARTS.filter(([k]) => setsData.type === "show" || k === "poster_set" || k === "background_set");
+  const chosen = parts.filter(([k]) => staged[k]);
+  if (!chosen.length) { box.append("No picks: everything follows your creator priority" + (setsData.aura ? " and AURA." : ".")); return; }
+  chosen.forEach(([k, label], i) => {
+    if (i) box.append(" · ");
+    box.append(label + ": ", el("b", { text: creatorOf(staged[k]) }));
+  });
+}
+
+function renderSets() {
+  const box = $("setCards"), auto = setsData.auto || {};
+  box.innerHTML = "";
+  renderSummary();
+  for (const set of setsData.sets) {
+    const head = el("div", { class: "head" }, el("span", { class: "who", text: set.creator || "Unknown creator" }));
+    if (set.favourite) head.append(el("span", { class: "badge fav", text: "Favourite #" + set.favourite }));
+    if (set.excluded) head.append(el("span", { class: "badge excl", text: "Excluded" }));
+    const autoParts = PARTS.filter(([k]) => auto[k] === set.id).map(([, l]) => l.toLowerCase());
+    if (autoParts.length) head.append(el("span", { class: "badge auto", text: "Used now for " + autoParts.join(", ") }));
+    head.append(el("span", { class: "badge", text: plural(set.seasons.length, "season poster", "season posters") + " · " + plural(set.card_count, "title card", "title cards") }));
+
+    const main = el("div", { class: "main" });
+    if (set.poster) main.append(el("img", { class: "p", src: set.poster, alt: "Poster", loading: "lazy" }));
+    if (set.background) main.append(el("img", { class: "b", src: set.background, alt: "Background", loading: "lazy" }));
+    if (set.logo) main.append(el("img", { class: "l", src: set.logo, alt: "Logo", loading: "lazy" }));
+
+    const card = el("div", { class: "setcard" }, head, main);
+    if (set.seasons.length) {
+      const strip = el("div", { class: "strip seasons" });
+      for (const x of set.seasons) strip.append(el("figure", {}, el("img", { src: x.url, alt: "Season " + x.season, loading: "lazy" }), el("figcaption", { text: x.season === 0 ? "Specials" : "S" + x.season })));
+      card.append(el("div", { class: "striplabel", text: "Season posters" }), strip);
+    }
+    if (set.cards.length) {
+      const strip = el("div", { class: "strip cards" });
+      for (const x of set.cards) strip.append(el("figure", {}, el("img", { src: x.url, alt: "S" + x.season + "E" + x.episode, loading: "lazy" }), el("figcaption", { text: "S" + x.season + "E" + x.episode })));
+      const more = set.card_count > set.cards.length ? " (first " + set.cards.length + " of " + set.card_count + ")" : "";
+      card.append(el("div", { class: "striplabel", text: "Title cards" + more }), strip);
+    }
+
+    const has = { poster_set: !!set.poster, background_set: !!set.background,
+      season_set: set.seasons.length > 0 && setsData.type === "show", titlecard_set: set.card_count > 0 && setsData.type === "show" };
+    const parts = el("div", { class: "parts" });
+    const offered = PARTS.filter(([k]) => has[k]);
+    for (const [k, label] of offered) {
+      const on = staged[k] === set.id;
+      parts.append(el("button", { type: "button", "aria-pressed": String(on), text: (on ? "✓ " : "Use for ") + label.toLowerCase(),
+        onclick: () => { staged[k] = on ? "" : set.id; renderSets(); } }));
+    }
+    if (offered.length > 1) {
+      const all = offered.every(([k]) => staged[k] === set.id);
+      parts.append(el("button", { type: "button", class: "ghost", text: all ? "Unpick whole set" : "Use whole set",
+        onclick: () => { for (const [k] of offered) staged[k] = all ? "" : set.id; renderSets(); } }));
+    }
+    card.append(parts);
+    if (offered.some(([k]) => staged[k] === set.id)) card.classList.add("chosen");
+    box.append(card);
+  }
+}
+$("pickReset").onclick = () => { staged = Object.assign(emptyPick(), setsData.pick || {}); renderSets(); say($("pickMsg"), ""); };
+$("pickClear").onclick = () => { staged = emptyPick(); renderSets(); say($("pickMsg"), "All picks cleared here. Save to apply."); };
+$("pickSave").onclick = async () => {
+  $("pickSave").disabled = true;
+  try {
+    const body = Object.assign({ type: setsData.type, tmdb: setsData.tmdb, title: setsData.title || "", year: setsData.year || 0 }, staged);
+    const res = await api("/api/picks", { method: "POST", body: JSON.stringify(body) });
+    setsData.pick = Object.assign(emptyPick(), staged);
+    say($("pickMsg"), res.status, true);
+    loadPicks();
+  } catch (e) { say($("pickMsg"), e.message, false); }
+  finally { $("pickSave").disabled = false; }
+};
+
+let pickItems = [];
+async function loadPicks() {
+  try { pickItems = (await api("/api/picks")).items; } catch (_) { pickItems = []; }
+  renderPicks();
+}
+function renderPicks() {
+  const body = $("pickRows"), f = $("picksFilter").value.trim().toLowerCase();
+  body.innerHTML = "";
+  const rows = pickItems.filter((p) => !f || (p.title || "").toLowerCase().includes(f));
+  if (!rows.length) { body.append(el("tr", {}, el("td", { colspan: "4", class: "hint", text: pickItems.length ? "No titles match." : "No picks yet. Find a title above." }))); return; }
+  for (const p of rows) {
+    const name = (p.title || "TMDB " + p.tmdb) + (p.year ? " (" + p.year + ")" : "");
+    const open = el("button", { type: "button", text: "Open", onclick: () => {
+      $("setsType").value = p.type; $("setsQ").value = p.tmdb; findSets(p.type, p.tmdb); window.scrollTo({ top: 0, behavior: "smooth" });
+    } });
+    const rm = el("button", { type: "button", class: "danger", text: "Remove", onclick: async () => {
+      try { await api("/api/picks", { method: "POST", body: JSON.stringify(Object.assign({ type: p.type, tmdb: p.tmdb, title: p.title, year: p.year || 0 }, emptyPick())) }); loadPicks(); }
+      catch (e) { say($("pickMsg"), e.message, false); }
+    } });
+    body.append(el("tr", {}, el("td", { text: name }), el("td", { text: p.type === "movie" ? "Movie" : "Show" }),
+      el("td", { text: p.parts }), el("td", {}, el("div", { class: "row" }, open, rm))));
+  }
+}
+$("picksFilter").addEventListener("input", renderPicks);
+
 /* ---------- Try it ---------- */
 $("previewBtn").onclick = async () => {
   const q = $("previewQ").value.trim(), gallery = $("gallery");
@@ -812,7 +1015,17 @@ api("/api/settings").then(fill).catch((e) => { $("savebar").classList.add("show"
 refreshStatus();
 setInterval(refreshStatus, 20000);
 setInterval(() => { if ($("tab-log").classList.contains("active")) loadLog(); }, 15000);
-showTab(location.hash.slice(1) || "overview");
+{
+  // Links like #sets?type=show&q=1413 open a title on the Sets tab.
+  const [name, query] = location.hash.slice(1).split("?");
+  showTab(name || "overview");
+  const params = new URLSearchParams(query || "");
+  if (name === "sets" && params.get("q")) {
+    const type = params.get("type") === "movie" ? "movie" : "show";
+    $("setsType").value = type; $("setsQ").value = params.get("q");
+    findSets(type, params.get("q"));
+  }
+}
 </script>
 </body>
 </html>

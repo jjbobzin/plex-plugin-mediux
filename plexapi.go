@@ -17,9 +17,14 @@ import (
 	"time"
 )
 
+type plexRef struct {
+	Key     string // ratingKey
+	Section string // library section ID
+}
+
 type plexIndex struct {
 	built time.Time
-	items map[string][]string // "movie:603" -> Plex ratingKeys
+	items map[string][]plexRef // "movie:603" -> where it is on this server
 }
 
 type plexClient struct {
@@ -91,7 +96,7 @@ func (pc *plexClient) index(ctx context.Context, srv plexServer, maxAge time.Dur
 	if err := pc.do(ctx, srv, http.MethodGet, "/library/sections", &sections); err != nil {
 		return nil, err
 	}
-	built := &plexIndex{built: time.Now(), items: map[string][]string{}}
+	built := &plexIndex{built: time.Now(), items: map[string][]plexRef{}}
 	for _, d := range sections.MediaContainer.Directory {
 		kind := map[string]mediaType{"movie": typeMovie, "show": typeShow}[d.Type]
 		if kind == "" {
@@ -115,7 +120,7 @@ func (pc *plexClient) index(ctx context.Context, srv plexServer, maxAge time.Dur
 			for _, g := range m.Guid {
 				if id, ok := strings.CutPrefix(g.ID, "tmdb://"); ok {
 					k := string(kind) + ":" + id
-					built.items[k] = append(built.items[k], m.RatingKey)
+					built.items[k] = append(built.items[k], plexRef{m.RatingKey, d.Key})
 				}
 			}
 		}
@@ -127,8 +132,11 @@ func (pc *plexClient) index(ctx context.Context, srv plexServer, maxAge time.Dur
 }
 
 // refresh asks every configured server holding this title to refresh it.
+// With replaceLocked, artwork locked in Plex (uploaded by AURA, Kometa or by
+// hand) is unlocked first and Kometa's "Overlay" label is cleared, so the
+// refresh can apply the new artwork and Kometa re-applies its overlays on top.
 // It returns the names of the servers that were asked.
-func (pc *plexClient) refresh(ctx context.Context, servers []plexServer, typ mediaType, tmdb string) ([]string, error) {
+func (pc *plexClient) refresh(ctx context.Context, servers []plexServer, typ mediaType, tmdb string, replaceLocked bool) ([]string, error) {
 	var asked []string
 	var errs []error
 	for _, srv := range servers {
@@ -140,15 +148,21 @@ func (pc *plexClient) refresh(ctx context.Context, servers []plexServer, typ med
 			errs = append(errs, err)
 			continue
 		}
-		keys := idx.items[string(typ)+":"+tmdb]
-		if len(keys) == 0 && time.Since(idx.built) > 15*time.Minute {
+		refs := idx.items[string(typ)+":"+tmdb]
+		if len(refs) == 0 && time.Since(idx.built) > 15*time.Minute {
 			// Possibly added since the index was built: rebuild once and retry.
 			if idx, err = pc.index(ctx, srv, 0); err == nil {
-				keys = idx.items[string(typ)+":"+tmdb]
+				refs = idx.items[string(typ)+":"+tmdb]
 			}
 		}
-		for _, k := range keys {
-			if err := pc.do(ctx, srv, http.MethodPut, "/library/metadata/"+url.PathEscape(k)+"/refresh", nil); err != nil {
+		for _, ref := range refs {
+			if replaceLocked {
+				if err := pc.unlock(ctx, srv, typ, ref); err != nil {
+					errs = append(errs, err)
+					continue
+				}
+			}
+			if err := pc.do(ctx, srv, http.MethodPut, "/library/metadata/"+url.PathEscape(ref.Key)+"/refresh", nil); err != nil {
 				errs = append(errs, err)
 				continue
 			}
@@ -156,4 +170,71 @@ func (pc *plexClient) refresh(ctx context.Context, servers []plexServer, typ med
 		}
 	}
 	return asked, errors.Join(errs...)
+}
+
+// Plex's numeric item types for library edits.
+const (
+	plexTypeMovie   = "1"
+	plexTypeShow    = "2"
+	plexTypeSeason  = "3"
+	plexTypeEpisode = "4"
+)
+
+// unlock clears artwork locks and the Overlay label on a title, and for a
+// show on all its seasons and episodes, using Plex's library edit call.
+func (pc *plexClient) unlock(ctx context.Context, srv plexServer, typ mediaType, ref plexRef) error {
+	edit := func(plexType string, ids []string, fields ...string) error {
+		for len(ids) > 0 {
+			n := min(len(ids), 100)
+			q := url.Values{}
+			q.Set("type", plexType)
+			q.Set("id", strings.Join(ids[:n], ","))
+			for _, f := range fields {
+				q.Set(f+".locked", "0")
+			}
+			q.Set("label[].tag.tag-", "Overlay")
+			path := "/library/sections/" + url.PathEscape(ref.Section) + "/all?" + q.Encode()
+			if err := pc.do(ctx, srv, http.MethodPut, path, nil); err != nil {
+				return err
+			}
+			ids = ids[n:]
+		}
+		return nil
+	}
+	if typ == typeMovie {
+		return edit(plexTypeMovie, []string{ref.Key}, "thumb", "art")
+	}
+	if err := edit(plexTypeShow, []string{ref.Key}, "thumb", "art"); err != nil {
+		return err
+	}
+	type children struct {
+		MediaContainer struct {
+			Metadata []struct {
+				RatingKey string `json:"ratingKey"`
+			} `json:"Metadata"`
+		} `json:"MediaContainer"`
+	}
+	keys := func(path string) ([]string, error) {
+		var out children
+		if err := pc.do(ctx, srv, http.MethodGet, path, &out); err != nil {
+			return nil, err
+		}
+		var ks []string
+		for _, m := range out.MediaContainer.Metadata {
+			ks = append(ks, m.RatingKey)
+		}
+		return ks, nil
+	}
+	seasons, err := keys("/library/metadata/" + url.PathEscape(ref.Key) + "/children")
+	if err != nil {
+		return err
+	}
+	if err := edit(plexTypeSeason, seasons, "thumb", "art"); err != nil {
+		return err
+	}
+	episodes, err := keys("/library/metadata/" + url.PathEscape(ref.Key) + "/allLeaves")
+	if err != nil {
+		return err
+	}
+	return edit(plexTypeEpisode, episodes, "thumb")
 }

@@ -37,7 +37,13 @@ type plexProvider struct {
 	settings *settingsStore
 	activity *activityLog
 	aura     *auraStore
+	picks    *pickStore
 	watch    *watcher
+}
+
+// overrides gathers the settings-page pick and the AURA pick for a title.
+func (p *plexProvider) overrides(typ mediaType, tmdb string) override {
+	return override{pick: p.picks.get(typ, tmdb), aura: p.aura.pin(typ, tmdb)}
 }
 
 type plexRequest struct {
@@ -203,7 +209,10 @@ func (p *plexProvider) movieMatch(pr *plexRequest) {
 
 // describe names an image and who it came from, for recent activity.
 func describe(what string, c choice) string {
-	if c.aura {
+	switch c.source {
+	case "pick":
+		return what + " (your pick)"
+	case "aura":
 		return what + " (AURA pick)"
 	}
 	return what + " by " + c.art.Creator
@@ -260,21 +269,21 @@ func (p *plexProvider) movieItem(ctx context.Context, pr *plexRequest, tmdb, lab
 		return nil, "", err
 	}
 	cfg := p.settings.get()
-	pin := p.aura.pin(typeMovie, tmdb)
+	ov := p.overrides(typeMovie, tmdb)
 	var images []plexImage
 	var parts []string
-	poster := choosePoster(b, cfg, pr.language, pin)
+	poster := choosePoster(b, cfg, pr.language, ov)
 	if poster.ok {
 		item["thumb"] = p.url(pr, poster.art, cfg)
 		images = append(images, plexImage{"coverPoster", item["thumb"].(string), poster.art.Creator})
 		parts = append(parts, describe("poster", poster))
 	}
-	if c := chooseWithPoster(b, cfg, kindBackdrop, pr.language, poster, pin.backdropID()); c.ok {
+	if c := chooseWithPoster(b, cfg, kindBackdrop, pr.language, poster, ov); c.ok {
 		item["art"] = p.url(pr, c.art, cfg)
 		images = append(images, plexImage{"background", item["art"].(string), c.art.Creator})
 		parts = append(parts, describe("background", c))
 	}
-	if c := chooseWithPoster(b, cfg, kindLogo, pr.language, poster, ""); c.ok {
+	if c := chooseWithPoster(b, cfg, kindLogo, pr.language, poster, ov); c.ok {
 		images = append(images, plexImage{"clearLogo", p.url(pr, c.art, cfg), c.art.Creator})
 		parts = append(parts, "logo")
 	}
@@ -289,7 +298,7 @@ func (p *plexProvider) movieItem(ctx context.Context, pr *plexRequest, tmdb, lab
 	if poster.ok {
 		posterURL = imageURL(poster.art, "optimized")
 	}
-	p.watch.observe(typeMovie, tmdb, label, pr.language, movieSignature(b, cfg, pr.language, pin), basis(cfg, pin), posterURL, summary)
+	p.watch.observe(typeMovie, tmdb, label, pr.language, movieSignature(b, cfg, pr.language, ov), basis(cfg, ov), posterURL, summary)
 	return item, summary, nil
 }
 
@@ -450,7 +459,7 @@ type show struct {
 	tmdb      string
 	seasons   setChoice
 	cards     setChoice
-	pin       *auraPin
+	ov        override
 	structure map[int][]int // season -> episodes, from Mediux and artwork coverage
 }
 
@@ -464,9 +473,7 @@ func (p *plexProvider) loadShow(ctx context.Context, pr *plexRequest, tmdb strin
 		seasons:   chooseSet(b, cfg, kindSeason, pr.language),
 		cards:     chooseSet(b, cfg, kindStill, pr.language),
 		structure: map[int][]int{}}
-	if p.aura != nil {
-		sh.pin = p.aura.pin(typeShow, tmdb)
-	}
+	sh.ov = p.overrides(typeShow, tmdb)
 	add := func(s, e int) {
 		if _, ok := sh.structure[s]; !ok {
 			sh.structure[s] = nil
@@ -493,11 +500,11 @@ func (p *plexProvider) loadShow(ctx context.Context, pr *plexRequest, tmdb strin
 			}
 		}
 	}
-	if sh.pin != nil {
-		for season := range sh.pin.Seasons {
+	if pin := sh.ov.aura; pin != nil {
+		for season := range pin.Seasons {
 			add(season, 0)
 		}
-		for se := range sh.pin.Cards {
+		for se := range pin.Cards {
 			add(se[0], se[1])
 		}
 	}
@@ -536,35 +543,27 @@ func (sh *show) observe(title, summary string) {
 	if c := sh.poster(); c.ok {
 		posterURL = imageURL(c.art, "optimized")
 	}
-	sh.p.watch.observe(typeShow, sh.tmdb, title, sh.pr.language, sh.signature(), basis(sh.cfg, sh.pin), posterURL, summary)
+	sh.p.watch.observe(typeShow, sh.tmdb, title, sh.pr.language, sh.signature(), basis(sh.cfg, sh.ov), posterURL, summary)
 }
 
 func (sh *show) poster() choice {
-	return choosePoster(sh.b, sh.cfg, sh.pr.language, sh.pin)
+	return choosePoster(sh.b, sh.cfg, sh.pr.language, sh.ov)
 }
 
 func (sh *show) backdrop() choice {
-	return chooseWithPoster(sh.b, sh.cfg, kindBackdrop, sh.pr.language, sh.poster(), sh.pin.backdropID())
+	return chooseWithPoster(sh.b, sh.cfg, kindBackdrop, sh.pr.language, sh.poster(), sh.ov)
 }
 
 func (sh *show) logo() choice {
-	return chooseWithPoster(sh.b, sh.cfg, kindLogo, sh.pr.language, sh.poster(), "")
+	return chooseWithPoster(sh.b, sh.cfg, kindLogo, sh.pr.language, sh.poster(), sh.ov)
 }
 
 func (sh *show) season(season int) choice {
-	if a, ok := pinned(sh.b, sh.pin.seasonID(season)); ok {
-		return choice{a, true, true}
-	}
-	a, ok := pickInSet(sh.b, sh.cfg, kindSeason, season, 0, sh.pr.language, sh.seasons)
-	return choice{a, ok, false}
+	return chooseEach(sh.b, sh.cfg, kindSeason, season, 0, sh.pr.language, sh.seasons, sh.ov)
 }
 
 func (sh *show) card(season, episode int) choice {
-	if a, ok := pinned(sh.b, sh.pin.cardID(season, episode)); ok {
-		return choice{a, true, true}
-	}
-	a, ok := pickInSet(sh.b, sh.cfg, kindStill, season, episode, sh.pr.language, sh.cards)
-	return choice{a, ok, false}
+	return chooseEach(sh.b, sh.cfg, kindStill, season, episode, sh.pr.language, sh.cards, sh.ov)
 }
 
 func (sh *show) summary() string {
@@ -592,7 +591,9 @@ func (sh *show) summary() string {
 	if len(parts) == 0 {
 		return "no Mediux artwork"
 	}
-	if sh.pin != nil {
+	if sh.ov.pick != nil {
+		parts = append(parts, "your picks applied")
+	} else if sh.ov.aura != nil {
 		parts = append(parts, "AURA picks applied")
 	}
 	return strings.Join(parts, ", ")
