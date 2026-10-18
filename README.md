@@ -40,8 +40,23 @@ reverse proxy that asks for a login (Pangolin, Authelia, Cloudflare Access and
 so on). The page holds your Mediux key, so don't expose it without one. Plex
 keeps using the local `http://<server-ip>:38600/...` addresses either way.
 
-The settings page also has a **Try it** preview, to see what your settings
-pick for any title, and a **Recent activity** list of what Plex asked for.
+## What else it does
+
+- **AURA picks.** If you choose sets in [AURA](https://github.com/mediux-team/AURA),
+  share AURA's data folder with the container (the commented line in the
+  compose file) and the provider uses your saved sets ahead of creator
+  priority, on every Plex server. It only reads AURA's database.
+- **Watch for new artwork.** Plex only asks for artwork when a title is added
+  or refreshed. The provider re-checks Mediux on a schedule for titles Plex has
+  asked about. When something new appears, such as a title card uploaded after
+  the episode aired, it asks your Plex servers to refresh that title and can
+  post to a Discord channel. Add Plex servers and a Discord webhook on the
+  **Watch & notify** tab.
+- **Try it** shows what your settings pick for any title, and **Log** lists what
+  Plex asked for and what happened.
+
+Posters you uploaded or locked in Plex, for example through AURA or Kometa, are
+never replaced.
 
 ## Credits
 

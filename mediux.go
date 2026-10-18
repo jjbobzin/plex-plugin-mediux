@@ -210,6 +210,13 @@ func (c *mediuxClient) artwork(ctx context.Context, typ mediaType, tmdbID string
 	return b, err
 }
 
+// forget drops one title's cached artwork so the next lookup asks Mediux again.
+func (c *mediuxClient) forget(typ mediaType, tmdbID string) {
+	c.mu.Lock()
+	delete(c.cache, fmt.Sprintf("%d:%s:%s", c.generation, typ, tmdbID))
+	c.mu.Unlock()
+}
+
 func (c *mediuxClient) evictOldestLocked() {
 	var oldest string
 	var until time.Time

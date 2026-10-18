@@ -6,326 +6,610 @@
 <title>Mediux for Plex</title>
 <style>
   :root {
-    --bg: #151517; --panel: #1f1f23; --panel-2: #26262b; --line: #34343b;
-    --text: #ececf1; --muted: #a2a2ad; --accent: #e5a00d; --accent-text: #1b1300;
-    --good: #4ade80; --bad: #f87171; --chip: #2e2a4a; --chip-text: #b8b0ff;
+    --bg: #0d0e12; --surface: #15171d; --surface-2: #1c1f27; --inset: #0f1015; --line: #2a2d38;
+    --text: #e9eaf0; --muted: #9a9eae; --faint: #6b6f80;
+    --accent: #8b7cf6; --accent-soft: rgba(139,124,246,.14);
+    --good: #4ade80; --warn: #f5b544; --bad: #f87171;
     --radius: 14px;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  main { max-width: 980px; margin: 0 auto; padding: 32px 16px 120px; }
-  h1 { font-size: 30px; margin: 0 0 4px; letter-spacing: -0.02em; }
-  h2 { font-size: 19px; margin: 0 0 4px; }
-  p { margin: 0; }
-  .sub { color: var(--muted); }
-  header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
-  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
-    background: var(--panel); border: 1px solid var(--line); color: var(--muted); font-size: 13px; white-space: nowrap; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
-  .dot.on { background: var(--good); }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-    padding: 24px; margin-bottom: 20px; }
-  section > p.sub { margin-bottom: 18px; }
-  label { display: block; font-weight: 600; margin: 16px 0 6px; }
-  label.inline { display: flex; align-items: center; gap: 10px; font-weight: 500; }
-  input[type=text], input[type=password], input[type=number], select, textarea {
-    width: 100%; background: #121214; color: var(--text); border: 1px solid var(--line);
-    border-radius: 10px; padding: 11px 13px; font: inherit; }
-  textarea { min-height: 80px; resize: vertical; }
-  input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
-  .hint { color: var(--muted); font-size: 13px; margin-top: 6px; }
-  button { font: inherit; border-radius: 10px; padding: 10px 16px; cursor: pointer;
-    border: 1px solid var(--line); background: var(--panel-2); color: var(--text); }
-  button:hover:not(:disabled) { border-color: #55555f; }
-  button:disabled { opacity: 0.4; cursor: default; }
-  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
-  button.link { background: none; border: none; color: var(--bad); padding: 6px 8px; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--inset); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 16px; }
+
+  header.top { border-bottom: 1px solid var(--line); background: linear-gradient(180deg, #14131f 0%, var(--bg) 100%); }
+  header.top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 22px; padding-bottom: 14px; flex-wrap: wrap; }
+  header.top .wrap + .wrap { padding-top: 0; padding-bottom: 0; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .mark { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; font-size: 15px;
+    background: linear-gradient(135deg, var(--accent), #5b4ee0); color: #fff; letter-spacing: -0.03em; }
+  .brand h1 { font-size: 20px; margin: 0; letter-spacing: -0.02em; }
+  .brand p { margin: 0; color: var(--muted); font-size: 13px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border-radius: 999px; font-size: 12.5px;
+    background: var(--surface); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+  .dot.good { background: var(--good); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+
+  nav.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; flex: 1; min-width: 0; }
+  nav.tabs::-webkit-scrollbar { display: none; }
+  nav.tabs button { background: none; border: none; color: var(--muted); font: inherit; font-weight: 500; padding: 10px 14px;
+    border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; border-radius: 0; }
+  nav.tabs button:hover { color: var(--text); }
+  nav.tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+
+  main.wrap { padding-top: 26px; padding-bottom: 120px; }
+  section.tab { display: none; }
+  section.tab.active { display: block; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; margin-bottom: 18px; }
+  .card h2 { font-size: 17px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .card p.lead { color: var(--muted); margin: 0 0 16px; }
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+  .grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 820px) { .grid2 { grid-template-columns: minmax(0, 1fr); } .grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .stat .n { font-size: 28px; font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+  .stat .l { color: var(--muted); font-size: 13px; }
+  .stat.good .n { color: var(--good); } .stat.bad .n { color: var(--bad); }
+
+  .status-list { display: grid; gap: 10px; }
+  .status-row { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; background: var(--inset); border: 1px solid var(--line); border-radius: 10px; }
+  .status-row .dot { margin-top: 8px; flex: none; }
+  .status-row b { display: block; font-weight: 600; }
+  .status-row span { color: var(--muted); font-size: 13.5px; }
+
+  label { display: block; font-weight: 600; margin: 16px 0 6px; font-size: 14px; }
+  label:first-child { margin-top: 0; }
+  .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+  input[type=text], input[type=password], input[type=number], select {
+    width: 100%; background: var(--inset); color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 12px; font: inherit; }
+  input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .toggle { display: flex; align-items: flex-start; gap: 12px; margin-top: 14px; cursor: pointer; font-weight: 400; }
+  .toggle input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--accent); flex: none; }
+  .toggle b { display: block; font-weight: 600; } .toggle span { color: var(--muted); font-size: 13px; }
+
+  button { font: inherit; font-size: 14px; border-radius: 10px; padding: 9px 15px; cursor: pointer; border: 1px solid var(--line);
+    background: var(--surface-2); color: var(--text); }
+  button:hover:not(:disabled) { border-color: #4a4e5e; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.ghost { background: none; border-color: transparent; color: var(--muted); }
+  button.danger { background: none; border-color: transparent; color: var(--bad); }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .row > input { flex: 1 1 260px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
-  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
-  .msg { margin-top: 10px; font-size: 14px; min-height: 1.5em; }
+  .row > input { flex: 1 1 220px; width: auto; }
+  .msg { font-size: 13.5px; min-height: 1.4em; margin: 8px 0 0; }
   .msg.ok { color: var(--good); } .msg.err { color: var(--bad); }
-  .urls { display: grid; gap: 10px; margin-top: 12px; }
-  .url { display: flex; gap: 10px; align-items: center; background: #121214; border: 1px solid var(--line);
-    border-radius: 10px; padding: 8px 8px 8px 14px; }
-  .url code { flex: 1; overflow-wrap: anywhere; font-size: 14px; }
-  .url .k { color: var(--muted); font-size: 13px; width: 64px; flex: none; }
-  ol.steps { margin: 14px 0 0; padding-left: 20px; color: var(--muted); }
-  ol.steps li { margin: 4px 0; }
-  ol.steps b { color: var(--text); font-weight: 600; }
+
   .search { position: relative; }
-  .suggest { position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px); background: var(--panel-2);
-    border: 1px solid var(--line); border-radius: 10px; max-height: 260px; overflow: auto; display: none; }
+  .suggest { position: absolute; z-index: 10; left: 0; right: 0; top: calc(100% + 4px); background: var(--surface-2);
+    border: 1px solid var(--line); border-radius: 10px; max-height: 260px; overflow: auto; display: none; box-shadow: 0 12px 30px rgba(0,0,0,.4); }
   .suggest button { display: block; width: 100%; text-align: left; border: none; border-radius: 0; background: none; padding: 9px 14px; }
-  .suggest button:hover, .suggest button:focus { background: #33333a; }
-  ul.creators { list-style: none; margin: 14px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-  ul.creators li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-top: 1px solid var(--line); }
-  ul.creators li:first-child { border-top: none; }
-  ul.creators .n { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
-    background: var(--chip); color: var(--chip-text); font-size: 14px; flex: none; }
-  ul.creators .name { flex: 1; overflow-wrap: anywhere; }
-  ul.creators button.arrow { width: 38px; height: 38px; padding: 0; }
-  .empty { color: var(--muted); padding: 14px; }
-  .savebar { position: fixed; left: 0; right: 0; bottom: 0; background: rgba(21,21,23,0.94);
-    border-top: 1px solid var(--line); backdrop-filter: blur(6px); }
-  .savebar .in { max-width: 980px; margin: 0 auto; padding: 12px 16px; display: flex; gap: 14px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
-  .savebar .msg { margin: 0; flex: 1; }
+  .suggest button:hover, .suggest button:focus { background: var(--accent-soft); }
+  .empty { color: var(--muted); padding: 12px 14px; font-size: 14px; list-style: none; }
+
+  ol.rank { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
+  ol.rank li { display: flex; align-items: center; gap: 12px; padding: 8px 10px 8px 12px; background: var(--inset); border: 1px solid var(--line); border-radius: 10px; }
+  ol.rank li.empty { display: block; }
+  ol.rank .n { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 13px; flex: none; }
+  ol.rank .name { flex: 1; overflow-wrap: anywhere; font-weight: 500; }
+  ol.rank button { padding: 6px 10px; }
+
+  .tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .tag { display: inline-flex; align-items: center; gap: 6px; padding: 5px 6px 5px 12px; border-radius: 999px; background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.35); font-size: 13.5px; }
+  .tag button { padding: 0 7px; border: none; background: none; color: var(--bad); font-size: 16px; line-height: 1; }
+
+  .opt { display: grid; gap: 8px; }
+  .opt label.choice { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--inset); font-weight: 500; cursor: pointer; }
+  .opt label.choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+  .opt input[type=radio] { accent-color: var(--accent); margin-top: 4px; flex: none; }
+  .opt label.choice b { display: block; font-weight: 600; }
+  .opt label.choice span { display: block; color: var(--muted); font-size: 13px; font-weight: 400; }
+
+  .urls { display: grid; gap: 8px; margin-top: 12px; }
+  .url { display: flex; gap: 10px; align-items: center; background: var(--inset); border: 1px solid var(--line); border-radius: 10px; padding: 6px 6px 6px 12px; }
+  .url .k { color: var(--muted); font-size: 12px; width: 56px; flex: none; text-transform: uppercase; letter-spacing: .06em; }
+  .url code { flex: 1; border: none; background: none; padding: 0; overflow-wrap: anywhere; font-size: 13.5px; }
+  ol.steps { margin: 14px 0 0; padding-left: 20px; color: var(--muted); }
+  ol.steps li { margin: 5px 0; } ol.steps b { color: var(--text); }
+
+  .servers { display: grid; gap: 10px; margin-top: 12px; }
+  .server { display: grid; grid-template-columns: 1fr 1.4fr 1.2fr auto auto; gap: 8px; align-items: center; padding: 10px; background: var(--inset); border: 1px solid var(--line); border-radius: 10px; }
+  @media (max-width: 820px) { .server { grid-template-columns: 1fr; } }
+  .server .msg { grid-column: 1 / -1; margin: 0; min-height: 0; }
+
   .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; margin-top: 16px; }
-  .gallery figure { margin: 0; background: #121214; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-  .gallery img { width: 100%; display: block; background: #0d0d0f; }
+  .gallery figure { margin: 0; background: var(--inset); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .gallery img { width: 100%; display: block; background: #08080b; }
   .gallery figcaption { padding: 8px 10px; font-size: 13px; }
   .gallery figcaption span { color: var(--muted); display: block; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 12px; }
-  th, td { text-align: left; padding: 8px 10px; border-top: 1px solid var(--line); vertical-align: top; }
-  th { color: var(--muted); font-weight: 500; border-top: none; }
-  td.r-matched { color: var(--good); } td.r-error { color: var(--bad); }
-  td.r-not-found, td.r-no-artwork { color: var(--muted); }
-  .scroll { overflow-x: auto; }
+
+  .tablewrap { overflow-x: auto; margin-top: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 10px; border-top: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; border-top: none; }
+  td.when { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12.5px; white-space: nowrap; background: var(--surface-2); color: var(--muted); }
+  .pill.matched, .pill.new-artwork { background: rgba(74,222,128,.12); color: var(--good); }
+  .pill.error { background: rgba(248,113,113,.12); color: var(--bad); }
+
+  .savebar { position: fixed; left: 0; right: 0; bottom: 0; background: rgba(13,14,18,.94); border-top: 1px solid var(--line);
+    backdrop-filter: blur(8px); transform: translateY(100%); transition: transform .18s ease; }
+  .savebar.show { transform: none; }
+  .savebar .wrap { display: flex; gap: 12px; align-items: center; justify-content: flex-end; padding-top: 12px; padding-bottom: 12px; flex-wrap: wrap; }
+  .savebar .msg { margin: 0; flex: 1; }
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <div>
-      <h1>Mediux for Plex</h1>
-      <p class="sub">Mediux artwork for your Plex libraries, chosen by your favourite creators.</p>
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <div class="mark" aria-hidden="true">MX</div>
+      <div>
+        <h1>Mediux for Plex</h1>
+        <p id="versionLine">Artwork provider</p>
+      </div>
     </div>
-    <span class="pill"><span class="dot" id="tokenDot"></span><span id="tokenState">Checking…</span></span>
-  </header>
+    <div class="chips" aria-live="polite">
+      <span class="chip"><span class="dot" id="chipMediuxDot"></span><span id="chipMediux">Mediux</span></span>
+      <span class="chip"><span class="dot" id="chipAuraDot"></span><span id="chipAura">AURA</span></span>
+      <span class="chip"><span class="dot" id="chipWatchDot"></span><span id="chipWatch">Watching</span></span>
+    </div>
+  </div>
+  <div class="wrap">
+    <nav class="tabs" role="tablist" aria-label="Sections">
+      <button role="tab" data-tab="overview">Overview</button>
+      <button role="tab" data-tab="creators">Creators</button>
+      <button role="tab" data-tab="artwork">Artwork</button>
+      <button role="tab" data-tab="aura">AURA</button>
+      <button role="tab" data-tab="watch">Watch &amp; notify</button>
+      <button role="tab" data-tab="try">Try it</button>
+      <button role="tab" data-tab="log">Log</button>
+    </nav>
+  </div>
+</header>
 
-  <section>
-    <h2>Mediux connection</h2>
-    <p class="sub">Your Mediux API token, from your account settings on mediux.pro. It's saved on this server and never shown again.</p>
-    <label for="token">Mediux API token</label>
-    <input type="password" id="token" autocomplete="off" placeholder="Paste your token">
-    <div class="row" style="margin-top:12px">
-      <button type="button" id="checkBtn">Check connection</button>
+<main class="wrap">
+
+  <!-- Overview -->
+  <section class="tab" id="tab-overview" role="tabpanel">
+    <div class="grid4" style="margin-bottom:8px">
+      <div class="stat good"><div class="n" id="statMatched">0</div><div class="l">Matched with Mediux art</div></div>
+      <div class="stat"><div class="n" id="statNoArt">0</div><div class="l">No Mediux art</div></div>
+      <div class="stat"><div class="n" id="statNotFound">0</div><div class="l">Couldn't identify</div></div>
+      <div class="stat bad"><div class="n" id="statErrors">0</div><div class="l">Errors</div></div>
     </div>
-    <p class="msg" id="checkMsg" role="status"></p>
+    <p class="hint" style="margin:0 0 18px" id="statSince"></p>
+
+    <div class="grid2">
+      <div class="card">
+        <h2>Mediux connection</h2>
+        <p class="lead">Your Mediux API key. It's saved on this server and never shown again.</p>
+        <label for="token">API key</label>
+        <input type="password" id="token" autocomplete="off" placeholder="Paste your Mediux API key">
+        <div class="row" style="margin-top:10px">
+          <button type="button" id="checkBtn">Test connection</button>
+        </div>
+        <p class="msg" id="checkMsg" role="status"></p>
+      </div>
+
+      <div class="card">
+        <h2>Status</h2>
+        <div class="status-list">
+          <div class="status-row"><span class="dot" id="stMediuxDot"></span><div><b>Mediux</b><span id="stMediux"></span></div></div>
+          <div class="status-row"><span class="dot" id="stAuraDot"></span><div><b>AURA picks</b><span id="stAura"></span></div></div>
+          <div class="status-row"><span class="dot" id="stWatchDot"></span><div><b>Watching for new art</b><span id="stWatch"></span></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Add to Plex</h2>
+      <p class="lead">Each Plex server gets two providers, one for movies and one for TV, both pointing at this container.</p>
+      <label for="plexAddr">This container's address, as your Plex server reaches it</label>
+      <input type="text" id="plexAddr" placeholder="For example 192.168.1.10:32600" autocomplete="off" spellcheck="false">
+      <p class="hint">Include the port. Use a local address, never one behind a login page: Plex can't sign in. Servers on different networks may need different addresses.</p>
+      <div class="urls">
+        <div class="url"><span class="k">Movies</span><code id="urlMovies"></code><button type="button" data-copy="urlMovies">Copy</button></div>
+        <div class="url"><span class="k">TV</span><code id="urlTV"></code><button type="button" data-copy="urlTV">Copy</button></div>
+      </div>
+      <ol class="steps">
+        <li>In Plex: <b>Settings → Metadata Agents → Add Provider</b>, once for each address.</li>
+        <li>Create an agent with <b>Plex Movie</b> or <b>Plex Series</b> as the <b>Primary</b> (it can't be changed later), add <b>Mediux Artwork</b>, and drag it <b>to the top</b>.</li>
+        <li>Pick that agent for a library under <b>Edit → Advanced</b>, then refresh.</li>
+      </ol>
+    </div>
   </section>
 
-  <section>
-    <h2>Add to Plex</h2>
-    <p class="sub">Add both addresses in Plex under Settings → Metadata Agents → Add Provider.</p>
-    <label for="plexAddr">Your server's local address, as Plex reaches it</label>
-    <input type="text" id="plexAddr" placeholder="For example 192.168.1.10:38600" autocomplete="off" spellcheck="false">
-    <p class="hint">Include the port, the one on the left of <code>ports:</code> in your compose file. Use the local IP, never an address behind a login page (like Pangolin): Plex can't sign in.</p>
-    <div class="urls">
-      <div class="url"><span class="k">Movies</span><code id="urlMovies"></code><button type="button" data-copy="urlMovies">Copy</button></div>
-      <div class="url"><span class="k">TV</span><code id="urlTV"></code><button type="button" data-copy="urlTV">Copy</button></div>
+  <!-- Creators -->
+  <section class="tab" id="tab-creators" role="tabpanel">
+    <div class="card">
+      <h2>Favourite creators</h2>
+      <p class="lead">When several creators have artwork for a title, the one highest on this list wins. Creators you don't list still count, after these.</p>
+      <label for="creatorInput">Add a creator</label>
+      <div class="row search">
+        <input type="text" id="creatorInput" placeholder="Search Mediux usernames" autocomplete="off">
+        <button type="button" id="addCreator">Add</button>
+        <div class="suggest" id="suggest" role="listbox"></div>
+      </div>
+      <ol class="rank" id="creatorList"></ol>
+      <label class="toggle"><input type="checkbox" id="onlyPriority"><div><b>Only use these creators</b><span>Ignore artwork from anyone not on the list. Titles they haven't covered keep Plex's normal artwork.</span></div></label>
     </div>
-    <ol class="steps">
-      <li>Create an agent with <b>Plex Movie</b> (or <b>Plex Series</b>) as the <b>Primary</b>. The Primary can't be changed later.</li>
-      <li>Add <b>Mediux Artwork</b> to that agent and drag it <b>to the top</b>, so its artwork wins.</li>
-      <li>Set a library's agent to it (library → Edit → Advanced), then refresh to apply.</li>
-    </ol>
+
+    <div class="card">
+      <h2>Never use</h2>
+      <p class="lead">Artwork from these creators is skipped, even as a fallback. Picks you made yourself in AURA still apply.</p>
+      <div class="row">
+        <input type="text" id="excludeInput" placeholder="Mediux username" autocomplete="off">
+        <button type="button" id="addExclude">Add</button>
+      </div>
+      <div class="tags" id="excludedList"></div>
+    </div>
   </section>
 
-  <section>
-    <h2>Creator priority</h2>
-    <p class="sub">Creators at the top take priority. Use the arrows to set their order.</p>
-    <label for="creatorInput">Find a Mediux creator</label>
-    <div class="row search">
-      <input type="text" id="creatorInput" placeholder="Type at least 2 characters" autocomplete="off">
-      <button type="button" id="addCreator">Add username</button>
-      <div class="suggest" id="suggest" role="listbox"></div>
+  <!-- Artwork -->
+  <section class="tab" id="tab-artwork" role="tabpanel">
+    <div class="grid2">
+      <div class="card">
+        <h2>Season posters</h2>
+        <p class="lead">How to keep a show's season posters looking like one set.</p>
+        <div class="opt" id="seasonMode"></div>
+      </div>
+      <div class="card">
+        <h2>Title cards</h2>
+        <p class="lead">The same choice for episode title cards. It can differ from season posters.</p>
+        <div class="opt" id="cardMode"></div>
+      </div>
     </div>
-    <ul class="creators" id="creatorList"></ul>
-
-    <label for="excluded">Excluded creators</label>
-    <textarea id="excluded" placeholder="Usernames separated by commas"></textarea>
-    <p class="hint">Artwork from these creators is never used.</p>
-
-    <label class="inline"><input type="checkbox" id="onlyPriority"> Only use prioritized creators</label>
-  </section>
-
-  <section>
-    <h2>Artwork selection</h2>
-    <div class="grid">
-      <div>
-        <label for="seasonMode">Season poster consistency</label>
-        <select id="seasonMode"></select>
+    <div class="grid2">
+      <div class="card">
+        <h2>Gaps in the chosen set</h2>
+        <p class="lead">When the chosen set is missing a season or episode.</p>
+        <div class="opt" id="missing"></div>
       </div>
-      <div>
-        <label for="cardMode">Title card consistency</label>
-        <select id="cardMode"></select>
-      </div>
-      <div>
-        <label for="missing">Missing artwork in selected set</label>
-        <select id="missing">
-          <option value="Fallback">Use another Mediux set</option>
-          <option value="KeepExisting">Keep existing; no other Mediux set</option>
-        </select>
-      </div>
-      <div>
-        <label for="quality">Image quality</label>
+      <div class="card">
+        <h2>Images</h2>
+        <label for="quality">Quality</label>
         <select id="quality">
-          <option value="optimized">Optimized JPEG</option>
-          <option value="original">Original</option>
+          <option value="optimized">Optimized JPEG (smaller, recommended)</option>
+          <option value="original">Original files</option>
         </select>
-      </div>
-      <div>
-        <label for="cacheHours">Cache hours</label>
-        <input type="number" id="cacheHours" min="0" max="168" step="1">
-        <p class="hint">How long Mediux answers are reused. 0 turns the cache off.</p>
-      </div>
-      <div>
-        <label for="delivery">Image delivery</label>
+        <p class="hint">Logos always keep their transparency.</p>
+        <label for="delivery">Delivery</label>
         <select id="delivery">
-          <option value="direct">Plex downloads from Mediux</option>
-          <option value="relay">Relay through this server</option>
+          <option value="direct">Plex downloads straight from Mediux</option>
+          <option value="relay">Pass images through this container</option>
         </select>
-        <p class="hint">Use relay only if Plex can't download Mediux images.</p>
+        <p class="hint">Only switch to pass-through if Plex can't reach Mediux itself.</p>
+        <label for="cacheHours">Remember Mediux answers for (hours)</label>
+        <input type="number" id="cacheHours" min="0" max="168" step="1">
+        <p class="hint">0 asks Mediux every time.</p>
       </div>
     </div>
-    <p class="hint" style="margin-top:16px">Creator priority first keeps one set from the highest-priority creator that has artwork, using that creator's set with the most artwork. Complete set first can pick a lower-priority creator to cover every season or episode. Missing artwork follows your setting above, and anything Mediux doesn't have keeps Plex's normal artwork. Season posters and title cards can come from different sets. Changes apply the next time Plex refreshes an item.</p>
+    <p class="hint">Changes apply the next time Plex refreshes a title. Posters you uploaded or locked in Plex (for example by AURA or Kometa) are never replaced.</p>
   </section>
 
-  <section>
-    <h2>Try it</h2>
-    <p class="sub">See what your current settings would pick, without touching Plex. Save first to try new settings.</p>
-    <div class="row" style="margin-top:14px">
-      <select id="previewType" style="width:auto">
-        <option value="movie">Movie</option>
-        <option value="show">TV show</option>
-      </select>
-      <input type="text" id="previewQ" placeholder="Title, title with year, or TMDB ID">
-      <button type="button" id="previewBtn">Look up</button>
+  <!-- AURA -->
+  <section class="tab" id="tab-aura" role="tabpanel">
+    <div class="card">
+      <h2>Use your AURA picks</h2>
+      <p class="lead">Sets you saved in AURA win over creator priority, on every Plex server this provider serves. Keep choosing in AURA: this only reads its database, never changes it.</p>
+      <label for="auraDB">Path to AURA.db inside this container</label>
+      <input type="text" id="auraDB" placeholder="/aura/AURA.db" autocomplete="off" spellcheck="false">
+      <p class="hint">Share the folder holding AURA.db with this container read-only. For example, add <code>- /mnt/cache/appdata/aura/unlimited-primary:/aura:ro</code> under <code>volumes:</code> in the compose file, and the path here is <code>/aura/AURA.db</code>. Leave empty to turn it off.</p>
+      <div class="status-row" style="margin-top:14px"><span class="dot" id="auraDot"></span><div><b id="auraState">Not checked yet</b><span id="auraDetail"></span></div></div>
     </div>
-    <p class="msg" id="previewMsg" role="status"></p>
-    <div class="gallery" id="gallery"></div>
-  </section>
-
-  <section>
-    <div class="row" style="justify-content:space-between">
-      <div>
-        <h2>Recent activity</h2>
-        <p class="sub">What Plex asked for and what was found. Clears when the container restarts.</p>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div><h2>Saved picks</h2><p class="lead" style="margin:0">What AURA has pinned. Reloads by itself when AURA saves.</p></div>
+        <input type="text" id="auraFilter" placeholder="Filter titles" style="max-width:240px">
       </div>
-      <button type="button" id="refreshActivity">Refresh</button>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Title</th><th>Type</th><th>Pinned</th></tr></thead>
+          <tbody id="auraRows"></tbody>
+        </table>
+      </div>
     </div>
-    <div class="scroll">
-      <table>
-        <thead><tr><th>Time</th><th>Item</th><th>Result</th><th>Details</th></tr></thead>
-        <tbody id="activity"></tbody>
-      </table>
+  </section>
+
+  <!-- Watch & notify -->
+  <section class="tab" id="tab-watch" role="tabpanel">
+    <div class="card">
+      <h2>Watch for new artwork</h2>
+      <p class="lead">Plex only asks for artwork when a title is added or refreshed. Watching re-checks Mediux for titles Plex has asked about, so a title card uploaded a week after the episode still arrives.</p>
+      <div class="grid2">
+        <div>
+          <label for="watchHours">Check each title every</label>
+          <select id="watchHours">
+            <option value="0">Off</option>
+            <option value="6">6 hours</option>
+            <option value="12">12 hours</option>
+            <option value="24">24 hours</option>
+            <option value="48">2 days</option>
+            <option value="168">Week</option>
+          </select>
+          <p class="hint">Checks are spread out, 150 titles every 10 minutes, to go easy on Mediux.</p>
+        </div>
+        <div>
+          <label>Right now</label>
+          <div class="status-row"><span class="dot" id="watchDot"></span><div><b id="watchState"></b><span id="watchDetail"></span></div></div>
+          <div class="row" style="margin-top:10px"><button type="button" id="checkNow">Check everything now</button></div>
+          <p class="msg" id="checkNowMsg" role="status"></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Plex servers</h2>
+      <p class="lead">When new artwork turns up, these servers are asked to refresh just that title. Use addresses this container can reach, with your Plex token for each server.</p>
+      <label class="toggle"><input type="checkbox" id="refreshPlex"><div><b>Refresh titles in Plex automatically</b><span>Without this, new artwork waits for Plex's own next refresh.</span></div></label>
+      <div class="servers" id="servers"></div>
+      <div class="row" style="margin-top:12px"><button type="button" id="addServer">Add server</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Discord</h2>
+      <p class="lead">Post to a Discord channel when artwork arrives. In Discord: channel settings → Integrations → Webhooks → New webhook → Copy webhook URL.</p>
+      <label for="discord">Webhook address</label>
+      <div class="row">
+        <input type="password" id="discord" autocomplete="off" placeholder="https://discord.com/api/webhooks/…">
+        <button type="button" id="testDiscord">Send test</button>
+        <button type="button" class="danger" id="clearDiscord" hidden>Remove</button>
+      </div>
+      <p class="msg" id="discordMsg" role="status"></p>
+      <label class="toggle"><input type="checkbox" id="notifyUpdates"><div><b>New artwork for titles you have</b><span>For example new title cards for a running show, or a creator updating a set.</span></div></label>
+      <label class="toggle"><input type="checkbox" id="notifyNew"><div><b>Newly added titles that got Mediux art</b><span>Can be busy while a whole library is scanned. Large bursts are summarised.</span></div></label>
+    </div>
+  </section>
+
+  <!-- Try it -->
+  <section class="tab" id="tab-try" role="tabpanel">
+    <div class="card">
+      <h2>Try it</h2>
+      <p class="lead">See what your current settings pick for any title, without touching Plex. Save first to try new settings.</p>
+      <div class="row">
+        <select id="previewType" style="width:auto">
+          <option value="movie">Movie</option>
+          <option value="show">TV show</option>
+        </select>
+        <input type="text" id="previewQ" placeholder="Title, title with year, or TMDB ID">
+        <button type="button" class="primary" id="previewBtn">Look up</button>
+      </div>
+      <p class="msg" id="previewMsg" role="status"></p>
+      <div class="gallery" id="gallery"></div>
+    </div>
+  </section>
+
+  <!-- Log -->
+  <section class="tab" id="tab-log" role="tabpanel">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div><h2>Log</h2><p class="lead" style="margin:0">What Plex asked for and what happened. Keeps the last 200 entries until the container restarts.</p></div>
+        <div class="row">
+          <select id="logFilter" style="width:auto">
+            <option value="">Everything</option>
+            <option value="matched">Matched</option>
+            <option value="new artwork">New artwork</option>
+            <option value="no artwork">No artwork</option>
+            <option value="not found">Not identified</option>
+            <option value="error">Errors</option>
+          </select>
+          <button type="button" id="refreshLog">Refresh</button>
+        </div>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Time</th><th>Title</th><th>Result</th><th>Details</th></tr></thead>
+          <tbody id="logRows"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 </main>
 
-<div class="savebar">
-  <div class="in">
+<div class="savebar" id="savebar">
+  <div class="wrap">
     <p class="msg" id="saveMsg" role="status"></p>
-    <button type="button" class="primary" id="saveBtn">Save settings</button>
+    <button type="button" class="ghost" id="discardBtn">Discard</button>
+    <button type="button" class="primary" id="saveBtn">Save changes</button>
   </div>
 </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const modes = [
-  ["CreatorPriority", "Creator priority first; most artwork per creator"],
-  ["MostComplete", "Complete set first; then creator priority"],
-  ["SeriesPoster", "Match show poster set"],
-  ["Independent", "Choose each image separately"],
-];
-for (const sel of [$("seasonMode"), $("cardMode")]) {
-  for (const [v, t] of modes) sel.add(new Option(t, v));
-}
-
-let creators = [];
-let dirty = false;
+const el = (tag, props = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") n.className = v;
+    else if (k === "text") n.textContent = v;
+    else if (k === "value") n.value = v;
+    else if (k.startsWith("on")) n[k] = v;
+    else n.setAttribute(k, v);
+  }
+  for (const k of kids) n.append(k);
+  return n;
+};
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    ...opts,
-    headers: { "Content-Type": "application/json", "X-Mediux-Settings": "1", ...(opts.headers || {}) },
-  });
+  const res = await fetch(path, { ...opts, headers: { "Content-Type": "application/json", "X-Mediux-Settings": "1" } });
   let data = {};
   try { data = await res.json(); } catch (_) {}
   if (!res.ok) throw new Error(data.error || ("Request failed (" + res.status + ")"));
   return data;
 }
-
-function setMsg(el, text, ok) {
-  el.textContent = text;
-  el.className = "msg " + (ok === true ? "ok" : ok === false ? "err" : "");
+function say(node, text, ok) { node.textContent = text; node.className = "msg" + (ok === true ? " ok" : ok === false ? " err" : ""); }
+function dot(node, state) { node.className = "dot" + (state ? " " + state : ""); }
+const never = (iso) => !iso || iso.startsWith("0001");
+const plural = (n, one, many) => n + " " + (n === 1 ? one : many);
+function ago(iso) {
+  if (never(iso)) return "never";
+  const s = Math.round((Date.now() - new Date(iso)) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  if (s < 86400) return Math.round(s / 3600) + " h ago";
+  return Math.round(s / 86400) + " days ago";
 }
 
-function showToken(configured) {
-  $("tokenDot").classList.toggle("on", configured);
-  $("tokenState").textContent = configured ? "Mediux token saved" : "No Mediux token yet";
-  $("token").placeholder = configured ? "Saved — leave blank to keep it" : "Paste your token";
+/* ---------- tabs ---------- */
+const tabs = [...document.querySelectorAll("nav.tabs button")];
+function showTab(name) {
+  if (!document.getElementById("tab-" + name)) name = "overview";
+  for (const b of tabs) b.setAttribute("aria-selected", String(b.dataset.tab === name));
+  for (const s of document.querySelectorAll("section.tab")) s.classList.toggle("active", s.id === "tab-" + name);
+  if (name === "log") loadLog();
+  if (name === "aura") loadAura();
+  history.replaceState(null, "", "#" + name);
+}
+for (const b of tabs) b.onclick = () => showTab(b.dataset.tab);
+
+/* ---------- settings ---------- */
+const modeChoices = [
+  ["CreatorPriority", "Favourite creator first", "Use the top-ranked creator who has any, taking their most complete set."],
+  ["MostComplete", "Complete set first", "Prefer a set covering every season or episode, even from a lower-ranked creator."],
+  ["SeriesPoster", "Match the show poster", "Use the set the show poster came from."],
+  ["Independent", "Best image each time", "Pick each image on its own, mixing sets if needed."],
+];
+const missingChoices = [
+  ["Fallback", "Fill from another set", "Use the next best Mediux image for anything the chosen set lacks."],
+  ["KeepExisting", "Leave it to Plex", "Keep Plex's normal artwork for anything the chosen set lacks, so sets never mix."],
+];
+function radios(container, name, choices) {
+  container.innerHTML = "";
+  for (const [value, title, help] of choices) {
+    const input = el("input", { type: "radio", name, value });
+    input.onchange = changed;
+    container.append(el("label", { class: "choice" }, input, el("div", {}, el("b", { text: title }), el("span", { text: help }))));
+  }
+}
+radios($("seasonMode"), "seasonMode", modeChoices);
+radios($("cardMode"), "cardMode", modeChoices);
+radios($("missing"), "missing", missingChoices);
+const radioValue = (name) => (document.querySelector(`input[name="${name}"]:checked`) || {}).value;
+const setRadio = (name, v) => { const r = document.querySelector(`input[name="${name}"][value="${v}"]`); if (r) r.checked = true; };
+
+let loaded = null, creators = [], excluded = [], servers = [], clearDiscord = false, dirty = false;
+
+function changed() {
+  dirty = true;
+  $("savebar").classList.add("show");
+  say($("saveMsg"), "You have unsaved changes.");
+}
+for (const id of ["token", "onlyPriority", "quality", "delivery", "cacheHours", "auraDB", "watchHours", "refreshPlex", "discord", "notifyUpdates", "notifyNew"]) {
+  $(id).addEventListener("input", changed);
+  $(id).addEventListener("change", changed);
 }
 
+function fill(s) {
+  loaded = s;
+  creators = [...(s.priority_creators || [])];
+  excluded = [...(s.excluded_creators || [])];
+  servers = (s.plex_servers || []).map((p) => ({ name: p.name, url: p.url, token: "", has_token: p.has_token }));
+  clearDiscord = false;
+  $("token").value = "";
+  $("token").placeholder = s.token_configured ? "Saved. Leave blank to keep it" : "Paste your Mediux API key";
+  $("onlyPriority").checked = !!s.only_priority_creators;
+  setRadio("seasonMode", s.season_consistency);
+  setRadio("cardMode", s.titlecard_consistency);
+  setRadio("missing", s.missing_artwork);
+  $("quality").value = s.quality;
+  $("delivery").value = s.image_delivery;
+  $("cacheHours").value = s.cache_hours;
+  $("auraDB").value = s.aura_db || "";
+  $("watchHours").value = String(s.watch_hours);
+  $("refreshPlex").checked = !!s.refresh_plex;
+  $("discord").value = "";
+  $("discord").placeholder = s.discord_configured ? "Saved. Leave blank to keep it" : "https://discord.com/api/webhooks/…";
+  $("clearDiscord").hidden = !s.discord_configured;
+  $("notifyUpdates").checked = !!s.notify_updates;
+  $("notifyNew").checked = !!s.notify_new_items;
+  $("versionLine").textContent = "Artwork provider · " + s.version;
+  renderCreators(); renderExcluded(); renderServers();
+  dirty = false;
+  $("savebar").classList.remove("show");
+}
+
+function collect() {
+  return {
+    api_token: $("token").value.trim(),
+    priority_creators: creators,
+    excluded_creators: excluded,
+    only_priority_creators: $("onlyPriority").checked,
+    season_consistency: radioValue("seasonMode"),
+    titlecard_consistency: radioValue("cardMode"),
+    missing_artwork: radioValue("missing"),
+    quality: $("quality").value,
+    image_delivery: $("delivery").value,
+    cache_hours: parseInt($("cacheHours").value || "0", 10),
+    aura_db: $("auraDB").value.trim(),
+    watch_hours: parseInt($("watchHours").value, 10),
+    refresh_plex: $("refreshPlex").checked,
+    plex_servers: servers.map((s) => ({ name: s.name.trim(), url: s.url.trim(), token: s.token.trim() })),
+    discord_webhook: $("discord").value.trim(),
+    clear_discord: clearDiscord,
+    notify_updates: $("notifyUpdates").checked,
+    notify_new_items: $("notifyNew").checked,
+  };
+}
+
+$("saveBtn").onclick = async () => {
+  $("saveBtn").disabled = true;
+  try {
+    fill(await api("/api/settings", { method: "POST", body: JSON.stringify(collect()) }));
+    $("savebar").classList.add("show");
+    say($("saveMsg"), "Saved. Titles pick this up the next time Plex refreshes them.", true);
+    setTimeout(() => { if (!dirty) $("savebar").classList.remove("show"); }, 2500);
+    refreshStatus();
+  } catch (e) {
+    say($("saveMsg"), e.message, false);
+  } finally {
+    $("saveBtn").disabled = false;
+  }
+};
+$("discardBtn").onclick = () => { if (loaded) fill(loaded); };
+window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+/* ---------- creators ---------- */
 function renderCreators() {
   const list = $("creatorList");
   list.innerHTML = "";
-  if (!creators.length) {
-    const li = document.createElement("li");
-    li.className = "empty";
-    li.textContent = "No creators yet. Search above to add some.";
-    list.appendChild(li);
-    return;
-  }
+  if (!creators.length) { list.append(el("li", { class: "empty", text: "No favourites yet. Search above to add some." })); return; }
   creators.forEach((name, i) => {
-    const li = document.createElement("li");
-    const n = document.createElement("span"); n.className = "n"; n.textContent = i + 1;
-    const nm = document.createElement("span"); nm.className = "name"; nm.textContent = name;
-    const up = document.createElement("button"); up.type = "button"; up.className = "arrow"; up.textContent = "↑";
-    up.setAttribute("aria-label", "Move " + name + " up"); up.disabled = i === 0;
-    up.onclick = () => { [creators[i - 1], creators[i]] = [creators[i], creators[i - 1]]; changed(); renderCreators(); };
-    const down = document.createElement("button"); down.type = "button"; down.className = "arrow"; down.textContent = "↓";
-    down.setAttribute("aria-label", "Move " + name + " down"); down.disabled = i === creators.length - 1;
-    down.onclick = () => { [creators[i + 1], creators[i]] = [creators[i], creators[i + 1]]; changed(); renderCreators(); };
-    const rm = document.createElement("button"); rm.type = "button"; rm.className = "link"; rm.textContent = "Remove";
-    rm.onclick = () => { creators.splice(i, 1); changed(); renderCreators(); };
-    li.append(n, nm, up, down, rm);
-    list.appendChild(li);
+    const move = (d) => { [creators[i + d], creators[i]] = [creators[i], creators[i + d]]; changed(); renderCreators(); };
+    const up = el("button", { type: "button", "aria-label": "Move " + name + " up", text: "↑", onclick: () => move(-1) });
+    const down = el("button", { type: "button", "aria-label": "Move " + name + " down", text: "↓", onclick: () => move(1) });
+    up.disabled = i === 0; down.disabled = i === creators.length - 1;
+    const rm = el("button", { type: "button", class: "danger", text: "Remove", onclick: () => { creators.splice(i, 1); changed(); renderCreators(); } });
+    list.append(el("li", {}, el("span", { class: "n", text: String(i + 1) }), el("span", { class: "name", text: name }), up, down, rm));
   });
 }
-
 function addCreator(name) {
   name = (name || "").trim();
   if (!name || name.includes(",")) return;
-  if (!creators.some((c) => c.toLowerCase() === name.toLowerCase())) creators.push(name);
-  $("creatorInput").value = "";
-  hideSuggest();
-  changed();
-  renderCreators();
+  if (!creators.some((c) => c.toLowerCase() === name.toLowerCase())) { creators.push(name); changed(); }
+  $("creatorInput").value = ""; hideSuggest(); renderCreators();
 }
-
 function hideSuggest() { $("suggest").style.display = "none"; }
-
 let searchTimer, searchSeq = 0;
 $("creatorInput").addEventListener("input", () => {
   clearTimeout(searchTimer);
   const q = $("creatorInput").value.trim();
   if (q.length < 2) { hideSuggest(); return; }
   searchTimer = setTimeout(async () => {
-    const seq = ++searchSeq;
-    const box = $("suggest");
+    const seq = ++searchSeq, box = $("suggest");
     try {
       const data = await api("/api/creators?q=" + encodeURIComponent(q));
       if (seq !== searchSeq) return;
       box.innerHTML = "";
-      if (!data.items.length) {
-        box.innerHTML = '<div class="empty">No creators found. You can still add the username.</div>';
-      }
-      for (const name of data.items) {
-        const b = document.createElement("button");
-        b.type = "button"; b.textContent = name; b.onclick = () => addCreator(name);
-        box.appendChild(b);
-      }
-      box.style.display = "block";
+      if (!data.items.length) box.append(el("div", { class: "empty", text: "No match on Mediux. You can still add the name." }));
+      for (const name of data.items) box.append(el("button", { type: "button", text: name, onclick: () => addCreator(name) }));
     } catch (e) {
       if (seq !== searchSeq) return;
-      box.innerHTML = "";
-      const d = document.createElement("div"); d.className = "empty"; d.textContent = e.message;
-      box.appendChild(d); box.style.display = "block";
+      box.innerHTML = ""; box.append(el("div", { class: "empty", text: e.message }));
     }
+    box.style.display = "block";
   }, 300);
 });
 $("creatorInput").addEventListener("keydown", (e) => {
@@ -335,146 +619,200 @@ $("creatorInput").addEventListener("keydown", (e) => {
 $("addCreator").onclick = () => addCreator($("creatorInput").value);
 document.addEventListener("click", (e) => { if (!e.target.closest(".search")) hideSuggest(); });
 
-function changed() { dirty = true; setMsg($("saveMsg"), "Unsaved changes"); }
-for (const id of ["excluded", "onlyPriority", "seasonMode", "cardMode", "missing", "quality", "cacheHours", "delivery", "token"]) {
-  $(id).addEventListener("input", changed);
-  $(id).addEventListener("change", changed);
+function renderExcluded() {
+  const box = $("excludedList");
+  box.innerHTML = "";
+  if (!excluded.length) { box.append(el("span", { class: "hint", text: "Nobody excluded." })); return; }
+  excluded.forEach((name, i) => {
+    box.append(el("span", { class: "tag" }, name, el("button", { type: "button", "aria-label": "Stop excluding " + name, text: "×",
+      onclick: () => { excluded.splice(i, 1); changed(); renderExcluded(); } })));
+  });
 }
-
-function fill(s) {
-  creators = s.priority_creators || [];
-  $("excluded").value = (s.excluded_creators || []).join(", ");
-  $("onlyPriority").checked = !!s.only_priority_creators;
-  $("seasonMode").value = s.season_consistency;
-  $("cardMode").value = s.titlecard_consistency;
-  $("missing").value = s.missing_artwork;
-  $("quality").value = s.quality;
-  $("cacheHours").value = s.cache_hours;
-  $("delivery").value = s.image_delivery;
-  $("token").value = "";
-  showToken(s.token_configured);
-  renderCreators();
-}
-
-function collect() {
-  return {
-    api_token: $("token").value.trim(),
-    priority_creators: creators,
-    excluded_creators: $("excluded").value.split(",").map((s) => s.trim()).filter(Boolean),
-    only_priority_creators: $("onlyPriority").checked,
-    season_consistency: $("seasonMode").value,
-    titlecard_consistency: $("cardMode").value,
-    missing_artwork: $("missing").value,
-    quality: $("quality").value,
-    image_delivery: $("delivery").value,
-    cache_hours: parseInt($("cacheHours").value || "0", 10),
-  };
-}
-
-$("saveBtn").onclick = async () => {
-  $("saveBtn").disabled = true;
-  try {
-    fill(await api("/api/settings", { method: "POST", body: JSON.stringify(collect()) }));
-    dirty = false;
-    setMsg($("saveMsg"), "Saved. Refresh an item in Plex to apply.", true);
-  } catch (e) {
-    setMsg($("saveMsg"), e.message, false);
-  } finally {
-    $("saveBtn").disabled = false;
+function addExclude() {
+  let added = false;
+  for (const name of $("excludeInput").value.split(",").map((s) => s.trim()).filter(Boolean)) {
+    if (!excluded.some((c) => c.toLowerCase() === name.toLowerCase())) { excluded.push(name); added = true; }
   }
+  $("excludeInput").value = "";
+  if (added) changed();
+  renderExcluded();
+}
+$("addExclude").onclick = addExclude;
+$("excludeInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addExclude(); } });
+
+/* ---------- Plex servers ---------- */
+function renderServers() {
+  const box = $("servers");
+  box.innerHTML = "";
+  if (!servers.length) { box.append(el("div", { class: "empty", text: "No servers yet." })); return; }
+  servers.forEach((s, i) => {
+    const name = el("input", { type: "text", placeholder: "Name, e.g. Living room", value: s.name, "aria-label": "Server name" });
+    const url = el("input", { type: "text", placeholder: "http://10.0.0.5:32400", value: s.url, spellcheck: "false", "aria-label": "Server address" });
+    const token = el("input", { type: "password", placeholder: s.has_token ? "Token saved. Leave blank to keep" : "Plex token", autocomplete: "off", "aria-label": "Plex token" });
+    name.oninput = () => { s.name = name.value; changed(); };
+    url.oninput = () => { s.url = url.value; changed(); };
+    token.oninput = () => { s.token = token.value; changed(); };
+    const msg = el("p", { class: "msg" });
+    const test = el("button", { type: "button", text: "Test", onclick: async () => {
+      say(msg, "Connecting…");
+      try { say(msg, (await api("/api/test-plex", { method: "POST", body: JSON.stringify({ name: s.name, url: s.url, token: s.token }) })).status, true); }
+      catch (e) { say(msg, e.message, false); }
+    } });
+    const rm = el("button", { type: "button", class: "danger", text: "Remove", onclick: () => { servers.splice(i, 1); changed(); renderServers(); } });
+    box.append(el("div", { class: "server" }, name, url, token, test, rm, msg));
+  });
+}
+$("addServer").onclick = () => { servers.push({ name: "", url: "", token: "", has_token: false }); changed(); renderServers(); };
+
+/* ---------- Discord ---------- */
+$("testDiscord").onclick = async () => {
+  say($("discordMsg"), "Sending…");
+  try { say($("discordMsg"), (await api("/api/test-discord", { method: "POST", body: JSON.stringify({ discord_webhook: $("discord").value.trim() }) })).status, true); }
+  catch (e) { say($("discordMsg"), e.message, false); }
+};
+$("clearDiscord").onclick = () => {
+  clearDiscord = true; $("discord").value = ""; $("discord").placeholder = "Will be removed when you save";
+  $("clearDiscord").hidden = true; changed();
 };
 
+/* ---------- connection ---------- */
 $("checkBtn").onclick = async () => {
-  setMsg($("checkMsg"), "Checking…");
+  say($("checkMsg"), "Testing…");
   try {
-    const data = await api("/api/check", { method: "POST", body: JSON.stringify({ api_token: $("token").value.trim() }) });
-    setMsg($("checkMsg"), data.status + ($("token").value.trim() ? " Save settings to keep this token." : ""), true);
-  } catch (e) {
-    setMsg($("checkMsg"), e.message, false);
-  }
+    const typed = $("token").value.trim();
+    const data = await api("/api/check", { method: "POST", body: JSON.stringify({ api_token: typed }) });
+    say($("checkMsg"), data.status + (typed ? " Save to keep this key." : ""), true);
+  } catch (e) { say($("checkMsg"), e.message, false); }
 };
 
-for (const b of document.querySelectorAll("[data-copy]")) {
-  b.onclick = async () => {
-    const text = $(b.dataset.copy).textContent;
-    try { await navigator.clipboard.writeText(text); b.textContent = "Copied"; }
-    catch (_) { b.textContent = "Select and copy"; }
-    setTimeout(() => (b.textContent = "Copy"), 1500);
-  };
-}
-
-$("previewBtn").onclick = async () => {
-  const q = $("previewQ").value.trim();
-  const gallery = $("gallery");
-  gallery.innerHTML = "";
-  if (!q) { setMsg($("previewMsg"), "Enter a title or TMDB ID.", false); return; }
-  setMsg($("previewMsg"), "Looking up…");
-  try {
-    const data = await api("/api/preview?type=" + $("previewType").value + "&q=" + encodeURIComponent(q));
-    if (!data.images.length) {
-      setMsg($("previewMsg"), "Found TMDB " + data.tmdb + " (" + data.how + "), but no Mediux artwork passes your settings. Plex will keep its normal artwork.");
-      return;
-    }
-    setMsg($("previewMsg"), "TMDB " + data.tmdb + " (" + data.how + ")", true);
-    for (const img of data.images) {
-      const f = document.createElement("figure");
-      const i = document.createElement("img"); i.src = img.url; i.alt = img.label; i.loading = "lazy";
-      const c = document.createElement("figcaption"); c.textContent = img.label;
-      const s = document.createElement("span"); s.textContent = "by " + img.creator; c.appendChild(s);
-      f.append(i, c); gallery.appendChild(f);
-    }
-  } catch (e) {
-    setMsg($("previewMsg"), e.message, false);
-  }
-};
-$("previewQ").addEventListener("keydown", (e) => { if (e.key === "Enter") $("previewBtn").click(); });
-
-async function loadActivity() {
-  const body = $("activity");
-  try {
-    const data = await api("/api/activity");
-    body.innerHTML = "";
-    if (!data.items.length) {
-      body.innerHTML = '<tr><td colspan="4" class="sub">Nothing yet. Refresh a movie or show in Plex.</td></tr>';
-      return;
-    }
-    for (const a of data.items) {
-      const tr = document.createElement("tr");
-      const cells = [new Date(a.time).toLocaleTimeString(), a.item, a.result, a.detail];
-      cells.forEach((t, i) => {
-        const td = document.createElement("td"); td.textContent = t;
-        if (i === 2) td.className = "r-" + a.result.replace(/\s+/g, "-");
-        tr.appendChild(td);
-      });
-      body.appendChild(tr);
-    }
-  } catch (e) {
-    body.innerHTML = "";
-  }
-}
-$("refreshActivity").onclick = loadActivity;
-
-window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
-
-// Plex needs the server's local address and port. This page may be opened
-// through a proxy, so nothing is guessed: the person types it once and this
-// browser remembers it.
+/* ---------- Plex addresses ---------- */
 function showPlexURLs() {
   let addr = $("plexAddr").value.trim().replace(/^https?:\/\//i, "").replace(/[\/?#].*$/, "");
-  if ((addr.match(/:/g) || []).length > 1 && !addr.startsWith("[")) addr = "[" + addr + "]"; // bare IPv6
+  if ((addr.match(/:/g) || []).length > 1 && !addr.startsWith("[")) addr = "[" + addr + "]";
   const base = "http://" + (addr || "<server-ip>:<port>");
   $("urlMovies").textContent = base + "/movies";
   $("urlTV").textContent = base + "/tv";
 }
 try { $("plexAddr").value = localStorage.getItem("plexAddr") || ""; } catch (_) {}
-$("plexAddr").addEventListener("input", () => {
-  try { localStorage.setItem("plexAddr", $("plexAddr").value.trim()); } catch (_) {}
-  showPlexURLs();
-});
+$("plexAddr").addEventListener("input", () => { try { localStorage.setItem("plexAddr", $("plexAddr").value.trim()); } catch (_) {} showPlexURLs(); });
 showPlexURLs();
-api("/api/settings").then(fill).catch((e) => setMsg($("saveMsg"), e.message, false));
-loadActivity();
-setInterval(loadActivity, 15000);
+for (const b of document.querySelectorAll("[data-copy]")) {
+  b.onclick = async () => {
+    try { await navigator.clipboard.writeText($(b.dataset.copy).textContent); b.textContent = "Copied"; }
+    catch (_) { b.textContent = "Select it"; }
+    setTimeout(() => (b.textContent = "Copy"), 1500);
+  };
+}
+
+/* ---------- status ---------- */
+async function refreshStatus() {
+  let st;
+  try { st = await api("/api/status"); } catch (_) { return; }
+  const t = st.totals || {};
+  $("statMatched").textContent = (t["matched"] || 0) + (t["new artwork"] || 0);
+  $("statNoArt").textContent = t["no artwork"] || 0;
+  $("statNotFound").textContent = t["not found"] || 0;
+  $("statErrors").textContent = t["error"] || 0;
+  $("statSince").textContent = "Counted since the container started " + ago(st.started) + ".";
+
+  const m = st.token_configured;
+  dot($("chipMediuxDot"), m ? "good" : "bad"); dot($("stMediuxDot"), m ? "good" : "bad");
+  $("chipMediux").textContent = m ? "Mediux key saved" : "No Mediux key";
+  $("stMediux").textContent = m ? "API key saved. Use Test connection to check it." : "Add your API key to start.";
+
+  const a = st.aura || {};
+  let auraText, auraState;
+  if (!a.path) { auraText = "Turned off."; auraState = ""; }
+  else if (!a.found) { auraText = "No AURA.db at " + a.path + "."; auraState = "warn"; }
+  else if (a.error) { auraText = "Couldn't read it: " + a.error; auraState = "bad"; }
+  else { auraText = plural(a.movies, "movie", "movies") + " and " + plural(a.shows, "show", "shows") + " pinned, loaded " + ago(a.loaded_at) + "."; auraState = "good"; }
+  dot($("chipAuraDot"), auraState); dot($("stAuraDot"), auraState); dot($("auraDot"), auraState);
+  $("chipAura").textContent = auraState === "good" ? "AURA: " + plural(a.movies + a.shows, "pick", "picks") : "AURA off";
+  $("stAura").textContent = auraText;
+  $("auraState").textContent = auraState === "good" ? "Connected" : !a.path ? "Off" : auraState === "warn" ? "File not found" : "Problem reading it";
+  $("auraDetail").textContent = auraText;
+
+  const w = st.watch || {};
+  const watchText = w.active
+    ? plural(w.tracked, "title", "titles") + " watched. Last check " + ago(w.last_run) + (never(w.last_run) ? "." : ", " + w.last_found + " with new art.")
+    : (w.reason || "Off.") + " " + plural(w.tracked || 0, "title", "titles") + " known so far.";
+  const watchState = w.active ? (w.running ? "warn" : "good") : "";
+  dot($("chipWatchDot"), watchState); dot($("stWatchDot"), watchState); dot($("watchDot"), watchState);
+  $("chipWatch").textContent = w.active ? (w.running ? "Checking…" : "Watching " + w.tracked) : "Not watching";
+  $("stWatch").textContent = watchText;
+  $("watchState").textContent = w.active ? (w.running ? "Checking now" : "On") : "Off";
+  $("watchDetail").textContent = watchText;
+}
+$("checkNow").onclick = async () => {
+  say($("checkNowMsg"), "Starting…");
+  try { say($("checkNowMsg"), (await api("/api/check-now", { method: "POST", body: "{}" })).status, true); refreshStatus(); }
+  catch (e) { say($("checkNowMsg"), e.message, false); }
+};
+
+/* ---------- AURA ---------- */
+let auraItems = [];
+async function loadAura() {
+  try { auraItems = (await api("/api/aura")).items; } catch (_) { auraItems = []; }
+  renderAura();
+}
+function renderAura() {
+  const body = $("auraRows"), f = $("auraFilter").value.trim().toLowerCase();
+  body.innerHTML = "";
+  const rows = auraItems.filter((p) => !f || p.title.toLowerCase().includes(f));
+  if (!rows.length) {
+    body.append(el("tr", {}, el("td", { colspan: "3", class: "hint", text: auraItems.length ? "No titles match." : "No AURA picks loaded." })));
+    return;
+  }
+  for (const p of rows) {
+    body.append(el("tr", {}, el("td", { text: p.title + (p.year ? " (" + p.year + ")" : "") }),
+      el("td", { text: p.type === "movie" ? "Movie" : "Show" }), el("td", { text: p.parts })));
+  }
+}
+$("auraFilter").addEventListener("input", renderAura);
+
+/* ---------- Try it ---------- */
+$("previewBtn").onclick = async () => {
+  const q = $("previewQ").value.trim(), gallery = $("gallery");
+  gallery.innerHTML = "";
+  if (!q) { say($("previewMsg"), "Enter a title or TMDB ID.", false); return; }
+  say($("previewMsg"), "Looking up…");
+  try {
+    const d = await api("/api/preview?type=" + $("previewType").value + "&q=" + encodeURIComponent(q));
+    if (!d.images.length) { say($("previewMsg"), "Found TMDB " + d.tmdb + " (" + d.how + "), but no Mediux artwork passes your settings, so Plex keeps its normal artwork."); return; }
+    say($("previewMsg"), "TMDB " + d.tmdb + ", found by " + d.how + ".", true);
+    for (const img of d.images) {
+      gallery.append(el("figure", {}, el("img", { src: img.url, alt: img.label, loading: "lazy" }),
+        el("figcaption", {}, img.label, el("span", { text: img.creator }))));
+    }
+  } catch (e) { say($("previewMsg"), e.message, false); }
+};
+$("previewQ").addEventListener("keydown", (e) => { if (e.key === "Enter") $("previewBtn").click(); });
+
+/* ---------- Log ---------- */
+let logItems = [];
+async function loadLog() {
+  try { logItems = (await api("/api/activity")).items; } catch (_) {}
+  renderLog();
+}
+function renderLog() {
+  const body = $("logRows"), f = $("logFilter").value;
+  body.innerHTML = "";
+  const rows = logItems.filter((a) => !f || a.result === f);
+  if (!rows.length) { body.append(el("tr", {}, el("td", { colspan: "4", class: "hint", text: "Nothing here yet. Refresh a movie or show in Plex." }))); return; }
+  for (const a of rows) {
+    body.append(el("tr", {}, el("td", { class: "when", text: new Date(a.time).toLocaleString() }), el("td", { text: a.item }),
+      el("td", {}, el("span", { class: "pill " + a.result.replace(/\s+/g, "-"), text: a.result })), el("td", { text: a.detail })));
+  }
+}
+$("logFilter").onchange = renderLog;
+$("refreshLog").onclick = loadLog;
+
+/* ---------- start ---------- */
+api("/api/settings").then(fill).catch((e) => { $("savebar").classList.add("show"); say($("saveMsg"), e.message, false); });
+refreshStatus();
+setInterval(refreshStatus, 20000);
+setInterval(() => { if ($("tab-log").classList.contains("active")) loadLog(); }, 15000);
+showTab(location.hash.slice(1) || "overview");
 </script>
 </body>
 </html>

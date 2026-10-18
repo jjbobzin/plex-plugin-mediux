@@ -4,11 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 )
+
+var discordWebhookRe = regexp.MustCompile(`^https://(?:canary\.|ptb\.)?discord(?:app)?\.com/api/webhooks/\d+/[\w-]+$`)
 
 // Consistency modes for season posters and title cards.
 const (
@@ -29,6 +33,24 @@ type settings struct {
 	Quality              string   `json:"quality"`         // optimized or original
 	ImageDelivery        string   `json:"image_delivery"`  // direct or relay
 	CacheHours           int      `json:"cache_hours"`
+
+	// AURA picks: path to AURA.db inside this container ("" turns it off).
+	AuraDB string `json:"aura_db"`
+
+	// Watching for new artwork.
+	WatchHours     int          `json:"watch_hours"` // 0 turns watching off
+	RefreshPlex    bool         `json:"refresh_plex"`
+	PlexServers    []plexServer `json:"plex_servers"`
+	DiscordWebhook string       `json:"discord_webhook"`
+	NotifyUpdates  bool         `json:"notify_updates"`   // new or changed artwork found by the watcher
+	NotifyNewItems bool         `json:"notify_new_items"` // a newly added title got Mediux artwork
+}
+
+// plexServer is a Plex Media Server the provider may ask to refresh items.
+type plexServer struct {
+	Name  string `json:"name"`
+	URL   string `json:"url"`
+	Token string `json:"token,omitempty"`
 }
 
 func defaultSettings() settings {
@@ -41,6 +63,11 @@ func defaultSettings() settings {
 		Quality:              "optimized",
 		ImageDelivery:        "direct",
 		CacheHours:           24,
+		AuraDB:               "/aura/AURA.db",
+		WatchHours:           24,
+		RefreshPlex:          true,
+		PlexServers:          []plexServer{},
+		NotifyUpdates:        true,
 	}
 }
 
@@ -60,6 +87,27 @@ func (s settings) validate() error {
 	}
 	if s.CacheHours < 0 || s.CacheHours > 168 {
 		return errors.New("cache hours must be between 0 and 168")
+	}
+	if s.WatchHours < 0 || s.WatchHours > 168 {
+		return errors.New("watch interval must be between 0 and 168 hours")
+	}
+	if len(s.AuraDB) > 512 {
+		return errors.New("AURA database path is too long")
+	}
+	if s.DiscordWebhook != "" && !discordWebhookRe.MatchString(s.DiscordWebhook) {
+		return errors.New("the Discord webhook should look like https://discord.com/api/webhooks/…")
+	}
+	if len(s.PlexServers) > 10 {
+		return errors.New("too many Plex servers")
+	}
+	for _, p := range s.PlexServers {
+		u, err := url.Parse(p.URL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("Plex server %q needs an address like http://10.0.0.5:32400", p.Name)
+		}
+		if strings.TrimSpace(p.Name) == "" || len(p.Name) > 64 {
+			return errors.New("every Plex server needs a name")
+		}
 	}
 	for _, list := range [][]string{s.PriorityCreators, s.ExcludedCreators} {
 		if len(list) > 200 {
@@ -128,6 +176,7 @@ func (st *settingsStore) get() settings {
 	s := st.current
 	s.PriorityCreators = append([]string{}, s.PriorityCreators...)
 	s.ExcludedCreators = append([]string{}, s.ExcludedCreators...)
+	s.PlexServers = append([]plexServer{}, s.PlexServers...)
 	return s
 }
 

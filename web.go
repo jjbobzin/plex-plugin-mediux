@@ -20,10 +20,12 @@ var settingsPage []byte
 
 type webUI struct {
 	settings *settingsStore
-	mediux   *mediuxClient
-	ids      *identifier
+	provider *plexProvider
+	plex     *plexClient
+	discord  *discord
 	activity *activityLog
 	relay    *http.Client
+	started  time.Time
 }
 
 func (ui *webUI) routes(mux *http.ServeMux) {
@@ -31,9 +33,14 @@ func (ui *webUI) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/settings", ui.getSettings)
 	mux.HandleFunc("POST /api/settings", ui.guard(ui.saveSettings))
 	mux.HandleFunc("POST /api/check", ui.guard(ui.check))
+	mux.HandleFunc("GET /api/status", ui.status)
 	mux.HandleFunc("GET /api/creators", ui.creators)
 	mux.HandleFunc("GET /api/activity", ui.recent)
 	mux.HandleFunc("GET /api/preview", ui.preview)
+	mux.HandleFunc("GET /api/aura", ui.auraPicks)
+	mux.HandleFunc("POST /api/test-discord", ui.guard(ui.testDiscord))
+	mux.HandleFunc("POST /api/test-plex", ui.guard(ui.testPlex))
+	mux.HandleFunc("POST /api/check-now", ui.guard(ui.checkNow))
 	mux.HandleFunc("GET /img/{id}", ui.relayImage)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 }
@@ -63,41 +70,78 @@ func (ui *webUI) guard(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+type publicServer struct {
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	HasToken bool   `json:"has_token"`
+}
+
+// publicSettings is what the page sees: secrets are replaced by "is it set".
 type publicSettings struct {
 	settings
-	Token           string `json:"api_token,omitempty"`
-	TokenConfigured bool   `json:"token_configured"`
-	Version         string `json:"version"`
+	Token             string         `json:"api_token,omitempty"`
+	PlexServers       []publicServer `json:"plex_servers"`
+	DiscordWebhook    string         `json:"discord_webhook,omitempty"`
+	TokenConfigured   bool           `json:"token_configured"`
+	DiscordConfigured bool           `json:"discord_configured"`
+	Version           string         `json:"version"`
 }
 
 func (ui *webUI) getSettings(w http.ResponseWriter, _ *http.Request) {
 	s := ui.settings.get()
-	configured := strings.TrimSpace(s.Token) != ""
-	s.Token = ""
+	out := publicSettings{settings: s, PlexServers: []publicServer{},
+		TokenConfigured: strings.TrimSpace(s.Token) != "", DiscordConfigured: s.DiscordWebhook != "", Version: version}
+	for _, p := range s.PlexServers {
+		out.PlexServers = append(out.PlexServers, publicServer{p.Name, p.URL, p.Token != ""})
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 200, publicSettings{settings: s, TokenConfigured: configured, Version: version})
+	writeJSON(w, 200, out)
 }
 
 func (ui *webUI) saveSettings(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		settings
-		ClearToken bool `json:"clear_token"`
+		ClearToken   bool `json:"clear_token"`
+		ClearDiscord bool `json:"clear_discord"`
 	}
-	dec := json.NewDecoder(io.LimitReader(r.Body, 64<<10))
-	if err := dec.Decode(&in); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&in); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "could not read settings"})
 		return
 	}
 	next := in.settings
 	current := ui.settings.get()
+	// Blank secrets mean "keep the saved one".
 	next.Token = strings.TrimSpace(next.Token)
 	if next.Token == "" && !in.ClearToken {
-		next.Token = current.Token // blank means keep the saved token
+		next.Token = current.Token
 	}
+	next.DiscordWebhook = strings.TrimSpace(next.DiscordWebhook)
+	if next.DiscordWebhook == "" && !in.ClearDiscord {
+		next.DiscordWebhook = current.DiscordWebhook
+	}
+	// Match a blank token to the saved server by address, or by name when the
+	// address was just corrected.
+	byURL, byName := map[string]string{}, map[string]string{}
+	for _, p := range current.PlexServers {
+		byURL[strings.TrimRight(p.URL, "/")] = p.Token
+		byName[p.Name] = p.Token
+	}
+	for i := range next.PlexServers {
+		p := &next.PlexServers[i]
+		p.Name, p.URL, p.Token = strings.TrimSpace(p.Name), strings.TrimRight(strings.TrimSpace(p.URL), "/"), strings.TrimSpace(p.Token)
+		if p.Token == "" {
+			p.Token = byURL[p.URL]
+		}
+		if p.Token == "" {
+			p.Token = byName[p.Name]
+		}
+	}
+	next.AuraDB = strings.TrimSpace(next.AuraDB)
 	if err := ui.settings.save(next); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	ui.provider.aura.refresh(true)
 	ui.getSettings(w, r)
 }
 
@@ -116,11 +160,25 @@ func (ui *webUI) check(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	if err := ui.mediux.checkToken(ctx, token); err != nil {
+	if err := ui.provider.mediux.checkToken(ctx, token); err != nil {
 		writeJSON(w, 502, map[string]string{"error": err.Error()})
 		return
 	}
 	writeJSON(w, 200, map[string]string{"status": "Connected to Mediux."})
+}
+
+// status feeds the Overview tab.
+func (ui *webUI) status(w http.ResponseWriter, _ *http.Request) {
+	auraStatus, _ := ui.provider.aura.snapshot()
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, map[string]any{
+		"version":          version,
+		"started":          ui.started,
+		"token_configured": strings.TrimSpace(ui.settings.get().Token) != "",
+		"totals":           ui.activity.totals(),
+		"aura":             auraStatus,
+		"watch":            ui.provider.watch.snapshot(),
+	})
 }
 
 func (ui *webUI) creators(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +189,7 @@ func (ui *webUI) creators(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	names, err := ui.mediux.creators(ctx, q)
+	names, err := ui.provider.mediux.creators(ctx, q)
 	if err != nil {
 		writeJSON(w, 502, map[string]string{"error": "Creator search failed. Check the saved Mediux token."})
 		return
@@ -144,10 +202,104 @@ func (ui *webUI) recent(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, map[string]any{"items": ui.activity.recent()})
 }
 
+func (ui *webUI) auraPicks(w http.ResponseWriter, _ *http.Request) {
+	st, pins := ui.provider.aura.snapshot()
+	type row struct {
+		auraPin
+		Parts string `json:"parts"`
+	}
+	rows := []row{}
+	for _, p := range pins {
+		rows = append(rows, row{p, p.parts()})
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, map[string]any{"status": st, "items": rows})
+}
+
+func (ui *webUI) testDiscord(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Webhook string `json:"discord_webhook"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&in)
+	hook := strings.TrimSpace(in.Webhook)
+	if hook == "" {
+		hook = ui.settings.get().DiscordWebhook
+	}
+	if !discordWebhookRe.MatchString(hook) {
+		writeJSON(w, 400, map[string]string{"error": "Paste a Discord webhook address first (https://discord.com/api/webhooks/…)."})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	err := ui.discord.send(ctx, hook, []discordEmbed{{Title: "Mediux for Plex is connected",
+		Description: "New Mediux artwork for your Plex libraries will be posted here.", Color: colorNew}})
+	if err != nil {
+		writeJSON(w, 502, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "Test message sent. Check the Discord channel."})
+}
+
+func (ui *webUI) testPlex(w http.ResponseWriter, r *http.Request) {
+	var in plexServer
+	_ = json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&in)
+	in.URL = strings.TrimRight(strings.TrimSpace(in.URL), "/")
+	in.Token = strings.TrimSpace(in.Token)
+	if in.Token == "" {
+		for _, p := range ui.settings.get().PlexServers {
+			if strings.TrimRight(p.URL, "/") == in.URL {
+				in.Token = p.Token
+			}
+		}
+	}
+	if u, err := url.Parse(in.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		writeJSON(w, 400, map[string]string{"error": "Enter the server address, like http://10.0.0.5:32400"})
+		return
+	}
+	if in.Token == "" {
+		writeJSON(w, 400, map[string]string{"error": "Enter the Plex token for this server."})
+		return
+	}
+	if in.Name == "" {
+		in.Name = in.URL
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	name, err := ui.plex.identify(ctx, in)
+	if err != nil {
+		writeJSON(w, 502, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "Connected to " + name + "."})
+}
+
+// checkNow runs the watcher over every tracked title in the background.
+func (ui *webUI) checkNow(w http.ResponseWriter, _ *http.Request) {
+	st := ui.provider.watch.snapshot()
+	if !st.Active {
+		writeJSON(w, 400, map[string]string{"error": st.Reason})
+		return
+	}
+	if st.Running {
+		writeJSON(w, 409, map[string]string{"error": errWatchBusy.Error()})
+		return
+	}
+	go ui.provider.watch.checkDue(context.Background(), true)
+	writeJSON(w, 200, map[string]string{"status": "Checking every tracked title now. Results appear in the Log."})
+}
+
 type previewImage struct {
 	Label   string `json:"label"`
 	URL     string `json:"url"`
 	Creator string `json:"creator"`
+}
+
+func previewOf(label string, c choice) previewImage {
+	creator := c.art.Creator
+	if c.aura {
+		creator += " · AURA pick"
+	}
+	return previewImage{label, imageURL(c.art, "optimized"), creator}
 }
 
 // preview shows what would be chosen for a movie or show, without Plex.
@@ -166,10 +318,11 @@ func (ui *webUI) preview(w http.ResponseWriter, r *http.Request) {
 	var err error
 	title, year := splitYear(q, 0)
 	h := hints{Title: title, Year: year}
+	ids := ui.provider.ids
 	if kind == "movie" {
-		tmdb, how, err = ui.ids.movie(ctx, h)
+		tmdb, how, err = ids.movie(ctx, h)
 	} else {
-		tmdb, how, err = ui.ids.show(ctx, q, h)
+		tmdb, how, err = ids.show(ctx, q, h)
 	}
 	if err != nil {
 		writeJSON(w, 502, map[string]string{"error": err.Error()})
@@ -184,41 +337,48 @@ func (ui *webUI) preview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cfg := ui.settings.get()
-	direct := func(a artwork) string { return imageURL(a, cfg.Quality) }
 	images := []previewImage{}
 	if kind == "movie" {
-		b, err := ui.mediux.artwork(ctx, typeMovie, tmdb)
+		b, err := ui.provider.mediux.artwork(ctx, typeMovie, tmdb)
 		if err != nil {
 			writeJSON(w, 502, map[string]string{"error": err.Error()})
 			return
 		}
-		for _, k := range []struct{ kind, label string }{{kindPoster, "Poster"}, {kindBackdrop, "Background"}, {kindLogo, "Logo"}} {
-			if a, ok := best(b, cfg, k.kind, "en"); ok {
-				images = append(images, previewImage{k.label, direct(a), a.Creator})
-			}
+		pin := ui.provider.aura.pin(typeMovie, tmdb)
+		poster := choosePoster(b, cfg, "en", pin)
+		if poster.ok {
+			images = append(images, previewOf("Poster", poster))
+		}
+		if c := chooseWithPoster(b, cfg, kindBackdrop, "en", poster, pin.backdropID()); c.ok {
+			images = append(images, previewOf("Background", c))
+		}
+		if c := chooseWithPoster(b, cfg, kindLogo, "en", poster, ""); c.ok {
+			images = append(images, previewOf("Logo", c))
 		}
 	} else {
-		pr := &plexRequest{language: "en"}
-		sh, err := (&plexProvider{mediux: ui.mediux, settings: ui.settings}).loadShow(ctx, pr, tmdb)
+		sh, err := ui.provider.loadShow(ctx, &plexRequest{language: "en"}, tmdb)
 		if err != nil {
 			writeJSON(w, 502, map[string]string{"error": err.Error()})
 			return
 		}
-		for _, k := range []struct{ kind, label string }{{kindPoster, "Poster"}, {kindBackdrop, "Background"}, {kindLogo, "Logo"}} {
-			if a, ok := best(sh.b, cfg, k.kind, "en"); ok {
-				images = append(images, previewImage{k.label, direct(a), a.Creator})
+		for _, x := range []struct {
+			label string
+			c     choice
+		}{{"Poster", sh.poster()}, {"Background", sh.backdrop()}, {"Logo", sh.logo()}} {
+			if x.c.ok {
+				images = append(images, previewOf(x.label, x.c))
 			}
 		}
 		for _, s := range sh.seasonNumbers() {
-			if a, ok := pickInSet(sh.b, cfg, kindSeason, s, 0, "en", sh.seasons); ok {
-				images = append(images, previewImage{"Season " + strconv.Itoa(s), direct(a), a.Creator})
+			if c := sh.season(s); c.ok {
+				images = append(images, previewOf("Season "+strconv.Itoa(s), c))
 			}
 		}
 		shown := 0
 		for _, s := range sh.seasonNumbers() {
 			for _, e := range sh.structure[s] {
-				if a, ok := pickInSet(sh.b, cfg, kindStill, s, e, "en", sh.cards); ok && shown < 24 {
-					images = append(images, previewImage{"S" + strconv.Itoa(s) + "E" + strconv.Itoa(e), direct(a), a.Creator})
+				if c := sh.card(s, e); c.ok && shown < 24 {
+					images = append(images, previewOf("S"+strconv.Itoa(s)+"E"+strconv.Itoa(e), c))
 					shown++
 				}
 			}

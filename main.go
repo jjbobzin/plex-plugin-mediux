@@ -3,10 +3,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -22,22 +27,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("settings: %v", err)
 	}
-	mediux := newMediuxClient(store)
-	ids := newIdentifier(mediux)
-	activity := &activityLog{}
-	plex := &plexProvider{mediux: mediux, ids: ids, settings: store, activity: activity}
-	ui := &webUI{settings: store, mediux: mediux, ids: ids, activity: activity,
-		relay: &http.Client{Timeout: 60 * time.Second}}
-
-	mux := http.NewServeMux()
-	ui.routes(mux)
-	for _, p := range []string{"/movies", "/movies/", "/tv", "/tv/"} {
-		mux.Handle(p, plex)
-	}
+	a := newApp(store, *configDir)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go a.watch.run(ctx)
+	go a.discord.run(ctx)
 
 	srv := &http.Server{
 		Addr:              *listen,
-		Handler:           logRequests(mux),
+		Handler:           logRequests(a.mux),
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      90 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -46,7 +44,19 @@ func main() {
 	if store.get().Token == "" {
 		log.Printf("no Mediux API token yet: open the settings page in a browser to add one")
 	}
-	log.Fatal(srv.ListenAndServe())
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		<-ctx.Done()
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdown)
+	}()
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
+	<-drained // let Plex's open requests finish before the final save
+	a.watch.save()
 }
 
 type statusRecorder struct {

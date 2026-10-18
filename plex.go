@@ -36,6 +36,8 @@ type plexProvider struct {
 	ids      *identifier
 	settings *settingsStore
 	activity *activityLog
+	aura     *auraStore
+	watch    *watcher
 }
 
 type plexRequest struct {
@@ -190,13 +192,21 @@ func (p *plexProvider) movieMatch(pr *plexRequest) {
 		writeJSON(pr.w, 200, mediaContainer(movieIdentifier, "Metadata", []any{}, 0, 0, 0))
 		return
 	}
-	item, found, err := p.movieItem(ctx, pr, id)
+	item, found, err := p.movieItem(ctx, pr, id, label)
 	if err != nil {
 		p.fail(pr, movieIdentifier, "movie", label, err)
 		return
 	}
 	p.activity.add("movie", label, resultWord(found), fmt.Sprintf("TMDB %s via %s; %s", id, how, found))
 	writeJSON(pr.w, 200, mediaContainer(movieIdentifier, "Metadata", []any{item}, 1, 1, 0))
+}
+
+// describe names an image and who it came from, for recent activity.
+func describe(what string, c choice) string {
+	if c.aura {
+		return what + " (AURA pick)"
+	}
+	return what + " by " + c.art.Creator
 }
 
 func resultWord(found string) string {
@@ -217,7 +227,7 @@ func (p *plexProvider) movieMetadata(pr *plexRequest, rest string) {
 	defer cancel()
 	switch sub {
 	case "":
-		item, found, err := p.movieItem(ctx, pr, m[1])
+		item, found, err := p.movieItem(ctx, pr, m[1], "TMDB "+m[1])
 		if err != nil {
 			p.fail(pr, movieIdentifier, "movie", "TMDB "+m[1], err)
 			return
@@ -239,7 +249,7 @@ func (p *plexProvider) movieMetadata(pr *plexRequest, rest string) {
 }
 
 // movieItem builds the artwork-only metadata item for a movie.
-func (p *plexProvider) movieItem(ctx context.Context, pr *plexRequest, tmdb string) (map[string]any, string, error) {
+func (p *plexProvider) movieItem(ctx context.Context, pr *plexRequest, tmdb, label string) (map[string]any, string, error) {
 	key := "tmdb-" + tmdb
 	item := map[string]any{
 		"ratingKey": key, "key": "/library/metadata/" + key,
@@ -250,29 +260,37 @@ func (p *plexProvider) movieItem(ctx context.Context, pr *plexRequest, tmdb stri
 		return nil, "", err
 	}
 	cfg := p.settings.get()
+	pin := p.aura.pin(typeMovie, tmdb)
 	var images []plexImage
 	var parts []string
-	if a, ok := best(b, cfg, kindPoster, pr.language); ok {
-		item["thumb"] = p.url(pr, a, cfg)
-		images = append(images, plexImage{"coverPoster", item["thumb"].(string), a.Creator})
-		parts = append(parts, "poster by "+a.Creator)
+	poster := choosePoster(b, cfg, pr.language, pin)
+	if poster.ok {
+		item["thumb"] = p.url(pr, poster.art, cfg)
+		images = append(images, plexImage{"coverPoster", item["thumb"].(string), poster.art.Creator})
+		parts = append(parts, describe("poster", poster))
 	}
-	if a, ok := best(b, cfg, kindBackdrop, pr.language); ok {
-		item["art"] = p.url(pr, a, cfg)
-		images = append(images, plexImage{"background", item["art"].(string), a.Creator})
-		parts = append(parts, "background")
+	if c := chooseWithPoster(b, cfg, kindBackdrop, pr.language, poster, pin.backdropID()); c.ok {
+		item["art"] = p.url(pr, c.art, cfg)
+		images = append(images, plexImage{"background", item["art"].(string), c.art.Creator})
+		parts = append(parts, describe("background", c))
 	}
-	if a, ok := best(b, cfg, kindLogo, pr.language); ok {
-		images = append(images, plexImage{"clearLogo", p.url(pr, a, cfg), a.Creator})
+	if c := chooseWithPoster(b, cfg, kindLogo, pr.language, poster, ""); c.ok {
+		images = append(images, plexImage{"clearLogo", p.url(pr, c.art, cfg), c.art.Creator})
 		parts = append(parts, "logo")
 	}
 	if len(images) > 0 {
 		item["Image"] = images
 	}
-	if len(parts) == 0 {
-		return item, "no Mediux artwork", nil
+	summary := "no Mediux artwork"
+	if len(parts) > 0 {
+		summary = strings.Join(parts, ", ")
 	}
-	return item, strings.Join(parts, ", "), nil
+	posterURL := ""
+	if poster.ok {
+		posterURL = imageURL(poster.art, "optimized")
+	}
+	p.watch.observe(typeMovie, tmdb, label, pr.language, movieSignature(b, cfg, pr.language, pin), basis(cfg, pin), posterURL, summary)
+	return item, summary, nil
 }
 
 // movieGallery lists every eligible image for Plex's Edit → Poster picker.
@@ -338,7 +356,9 @@ func (p *plexProvider) tvMatch(pr *plexRequest) {
 		if isOn(h.IncludeChildren) {
 			sh.attachChildren(item, -1)
 		}
-		p.activity.add("show", title, resultWord(sh.summary()), fmt.Sprintf("TMDB %s via %s; %s", id, how, sh.summary()))
+		summary := sh.summary()
+		p.activity.add("show", title, resultWord(summary), fmt.Sprintf("TMDB %s via %s; %s", id, how, summary))
+		sh.observe(title, summary)
 	case 3:
 		item = sh.seasonItem(*h.Index)
 		if isOn(h.IncludeChildren) {
@@ -387,7 +407,9 @@ func (p *plexProvider) tvMetadata(pr *plexRequest, rest string) {
 			sh.attachChildren(item, season)
 		}
 		if season < 0 {
-			p.activity.add("show", "TMDB "+m[1], resultWord(sh.summary()), "refresh; "+sh.summary())
+			summary := sh.summary()
+			p.activity.add("show", "TMDB "+m[1], resultWord(summary), "refresh; "+summary)
+			sh.observe("TMDB "+m[1], summary)
 		}
 		writeJSON(pr.w, 200, mediaContainer(tvIdentifier, "Metadata", []any{item}, 1, 1, 0))
 	case "images":
@@ -428,6 +450,7 @@ type show struct {
 	tmdb      string
 	seasons   setChoice
 	cards     setChoice
+	pin       *auraPin
 	structure map[int][]int // season -> episodes, from Mediux and artwork coverage
 }
 
@@ -441,6 +464,9 @@ func (p *plexProvider) loadShow(ctx context.Context, pr *plexRequest, tmdb strin
 		seasons:   chooseSet(b, cfg, kindSeason, pr.language),
 		cards:     chooseSet(b, cfg, kindStill, pr.language),
 		structure: map[int][]int{}}
+	if p.aura != nil {
+		sh.pin = p.aura.pin(typeShow, tmdb)
+	}
 	add := func(s, e int) {
 		if _, ok := sh.structure[s]; !ok {
 			sh.structure[s] = nil
@@ -465,6 +491,14 @@ func (p *plexProvider) loadShow(ctx context.Context, pr *plexRequest, tmdb strin
 			case kindStill:
 				add(a.Season, a.Episode)
 			}
+		}
+	}
+	if sh.pin != nil {
+		for season := range sh.pin.Seasons {
+			add(season, 0)
+		}
+		for se := range sh.pin.Cards {
+			add(se[0], se[1])
 		}
 	}
 	for s := range sh.structure {
@@ -496,30 +530,70 @@ func (sh *show) keys(season, episode int) (key, guid string) {
 	return key, tvIdentifier + "://" + kind + "/" + key
 }
 
+// observe tells the watcher what Plex was just given for this show.
+func (sh *show) observe(title, summary string) {
+	posterURL := ""
+	if c := sh.poster(); c.ok {
+		posterURL = imageURL(c.art, "optimized")
+	}
+	sh.p.watch.observe(typeShow, sh.tmdb, title, sh.pr.language, sh.signature(), basis(sh.cfg, sh.pin), posterURL, summary)
+}
+
+func (sh *show) poster() choice {
+	return choosePoster(sh.b, sh.cfg, sh.pr.language, sh.pin)
+}
+
+func (sh *show) backdrop() choice {
+	return chooseWithPoster(sh.b, sh.cfg, kindBackdrop, sh.pr.language, sh.poster(), sh.pin.backdropID())
+}
+
+func (sh *show) logo() choice {
+	return chooseWithPoster(sh.b, sh.cfg, kindLogo, sh.pr.language, sh.poster(), "")
+}
+
+func (sh *show) season(season int) choice {
+	if a, ok := pinned(sh.b, sh.pin.seasonID(season)); ok {
+		return choice{a, true, true}
+	}
+	a, ok := pickInSet(sh.b, sh.cfg, kindSeason, season, 0, sh.pr.language, sh.seasons)
+	return choice{a, ok, false}
+}
+
+func (sh *show) card(season, episode int) choice {
+	if a, ok := pinned(sh.b, sh.pin.cardID(season, episode)); ok {
+		return choice{a, true, true}
+	}
+	a, ok := pickInSet(sh.b, sh.cfg, kindStill, season, episode, sh.pr.language, sh.cards)
+	return choice{a, ok, false}
+}
+
 func (sh *show) summary() string {
 	var parts []string
-	if _, ok := best(sh.b, sh.cfg, kindPoster, sh.pr.language); ok {
-		parts = append(parts, "poster")
+	if c := sh.poster(); c.ok {
+		parts = append(parts, describe("poster", c))
 	}
 	seasons, cards := 0, 0
 	for s, eps := range sh.structure {
-		if _, ok := pickInSet(sh.b, sh.cfg, kindSeason, s, 0, sh.pr.language, sh.seasons); ok {
+		if sh.season(s).ok {
 			seasons++
 		}
 		for _, e := range eps {
-			if _, ok := pickInSet(sh.b, sh.cfg, kindStill, s, e, sh.pr.language, sh.cards); ok {
+			if sh.card(s, e).ok {
 				cards++
 			}
 		}
 	}
 	if seasons > 0 {
-		parts = append(parts, fmt.Sprintf("%d season posters", seasons))
+		parts = append(parts, plural(seasons, "season poster", "season posters"))
 	}
 	if cards > 0 {
-		parts = append(parts, fmt.Sprintf("%d title cards", cards))
+		parts = append(parts, plural(cards, "title card", "title cards"))
 	}
 	if len(parts) == 0 {
 		return "no Mediux artwork"
+	}
+	if sh.pin != nil {
+		parts = append(parts, "AURA picks applied")
 	}
 	return strings.Join(parts, ", ")
 }
@@ -528,16 +602,16 @@ func (sh *show) showItem() map[string]any {
 	key, guid := sh.keys(-1, -1)
 	item := map[string]any{"ratingKey": key, "key": "/library/metadata/" + key, "guid": guid, "type": "show"}
 	var images []plexImage
-	if a, ok := best(sh.b, sh.cfg, kindPoster, sh.pr.language); ok {
-		item["thumb"] = sh.p.url(sh.pr, a, sh.cfg)
-		images = append(images, plexImage{"coverPoster", item["thumb"].(string), a.Creator})
+	if c := sh.poster(); c.ok {
+		item["thumb"] = sh.p.url(sh.pr, c.art, sh.cfg)
+		images = append(images, plexImage{"coverPoster", item["thumb"].(string), c.art.Creator})
 	}
-	if a, ok := best(sh.b, sh.cfg, kindBackdrop, sh.pr.language); ok {
-		item["art"] = sh.p.url(sh.pr, a, sh.cfg)
-		images = append(images, plexImage{"background", item["art"].(string), a.Creator})
+	if c := sh.backdrop(); c.ok {
+		item["art"] = sh.p.url(sh.pr, c.art, sh.cfg)
+		images = append(images, plexImage{"background", item["art"].(string), c.art.Creator})
 	}
-	if a, ok := best(sh.b, sh.cfg, kindLogo, sh.pr.language); ok {
-		images = append(images, plexImage{"clearLogo", sh.p.url(sh.pr, a, sh.cfg), a.Creator})
+	if c := sh.logo(); c.ok {
+		images = append(images, plexImage{"clearLogo", sh.p.url(sh.pr, c.art, sh.cfg), c.art.Creator})
 	}
 	if len(images) > 0 {
 		item["Image"] = images
@@ -551,9 +625,9 @@ func (sh *show) seasonItem(season int) map[string]any {
 	item := map[string]any{"ratingKey": key, "key": "/library/metadata/" + key, "guid": guid, "type": "season",
 		"index": season, "parentRatingKey": showKey, "parentKey": "/library/metadata/" + showKey,
 		"parentGuid": showGuid, "parentType": "show"}
-	if a, ok := pickInSet(sh.b, sh.cfg, kindSeason, season, 0, sh.pr.language, sh.seasons); ok {
-		item["thumb"] = sh.p.url(sh.pr, a, sh.cfg)
-		item["Image"] = []plexImage{{"coverPoster", item["thumb"].(string), a.Creator}}
+	if c := sh.season(season); c.ok {
+		item["thumb"] = sh.p.url(sh.pr, c.art, sh.cfg)
+		item["Image"] = []plexImage{{"coverPoster", item["thumb"].(string), c.art.Creator}}
 	}
 	return item
 }
@@ -566,9 +640,9 @@ func (sh *show) episodeItem(season, episode int) map[string]any {
 		"index": episode, "parentIndex": season,
 		"parentRatingKey": seasonKey, "parentKey": "/library/metadata/" + seasonKey, "parentGuid": seasonGuid, "parentType": "season",
 		"grandparentRatingKey": showKey, "grandparentKey": "/library/metadata/" + showKey, "grandparentGuid": showGuid, "grandparentType": "show"}
-	if a, ok := pickInSet(sh.b, sh.cfg, kindStill, season, episode, sh.pr.language, sh.cards); ok {
-		item["thumb"] = sh.p.url(sh.pr, a, sh.cfg)
-		item["Image"] = []plexImage{{"snapshot", item["thumb"].(string), a.Creator}}
+	if c := sh.card(season, episode); c.ok {
+		item["thumb"] = sh.p.url(sh.pr, c.art, sh.cfg)
+		item["Image"] = []plexImage{{"snapshot", item["thumb"].(string), c.art.Creator}}
 	}
 	return item
 }

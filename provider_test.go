@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -17,6 +21,10 @@ func uuid(n int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", n)
 func asset(n int) map[string]any {
 	return map[string]any{"id": uuid(n), "modified_on": "2026-01-02T03:04:05Z", "language": nil}
 }
+
+// extraCard adds a new S2E3 title card to the fake Mediux, as if a creator
+// had just uploaded it.
+var extraCard atomic.Bool
 
 // fakeMediux answers the GraphQL queries the provider sends.
 func fakeMediux(t *testing.T) *httptest.Server {
@@ -92,6 +100,16 @@ func fakeMediux(t *testing.T) *httptest.Server {
 				inner[k] = v
 			}
 			inner["id"] = body.Variables["tmdb_id"]
+			if extraCard.Load() {
+				sets := append([]any{}, inner["show_sets"].([]any)...)
+				first := map[string]any{}
+				for k, v := range sets[0].(map[string]any) {
+					first[k] = v
+				}
+				first["titlecards"] = append(append([]any{}, first["titlecards"].([]any)...), card(18, 2, 3))
+				sets[0] = first
+				inner["show_sets"] = sets
+			}
 			data = map[string]any{"shows_by_id": inner}
 		case strings.Contains(body.Query, "shows(filter:{tvdb_id"):
 			tmdbByTVDB := map[any]string{"416491": "194764", "71173": "501", "73545": "1972"}
@@ -133,6 +151,7 @@ type harness struct {
 	server   *httptest.Server
 	store    *settingsStore
 	activity *activityLog
+	app      *app
 }
 
 func newHarness(t *testing.T, edit func(*settings)) *harness {
@@ -154,21 +173,15 @@ func newHarness(t *testing.T, edit func(*settings)) *harness {
 	if err := store.save(s); err != nil {
 		t.Fatal(err)
 	}
-	client := newMediuxClient(store)
-	client.endpoint = mx.URL
-	ids := newIdentifier(client)
-	ids.tvmaze = tv.URL
-	activity := &activityLog{}
-	plex := &plexProvider{mediux: client, ids: ids, settings: store, activity: activity}
-	ui := &webUI{settings: store, mediux: client, ids: ids, activity: activity, relay: http.DefaultClient}
-	mux := http.NewServeMux()
-	ui.routes(mux)
-	for _, p := range []string{"/movies", "/movies/", "/tv", "/tv/"} {
-		mux.Handle(p, plex)
-	}
+	extraCard.Store(false)
+	a := newApp(store, t.TempDir())
+	a.mediux.endpoint = mx.URL
+	a.ids.tvmaze = tv.URL
+	mux := a.mux
+	activity := a.activity
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return &harness{srv, store, activity}
+	return &harness{srv, store, activity, a}
 }
 
 func (h *harness) post(t *testing.T, path string, body any) map[string]any {
@@ -443,5 +456,211 @@ func TestSameTitleShowsFromDifferentYearsStayApart(t *testing.T) {
 	}
 	if got := match(3, "Season 01/Battlestar Galactica (1978) - S01E02.mkv"); got != "tmdb-501-s1" {
 		t.Errorf("1978 season = %v", got)
+	}
+}
+
+// writeAuraDB creates a minimal AURA.db with the tables the provider reads.
+func writeAuraDB(t *testing.T, path string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, q := range []string{
+		`CREATE TABLE MediaItems (id INTEGER PRIMARY KEY, tmdb_id TEXT, library_title TEXT, type TEXT, title TEXT, year INTEGER)`,
+		`CREATE TABLE SavedItems (tmdb_id TEXT, library_title TEXT, poster_set_id TEXT, poster_selected BOOLEAN,
+			backdrop_selected BOOLEAN, season_poster_selected BOOLEAN, special_season_poster_selected BOOLEAN,
+			titlecard_selected BOOLEAN, last_downloaded TEXT)`,
+		`CREATE TABLE ImageFiles (image_id TEXT, image_type TEXT, image_season_number INTEGER, image_episode_number INTEGER,
+			poster_set_id TEXT, item_tmdb_id TEXT)`,
+		`INSERT INTO MediaItems VALUES (1, '291870', 'Movies', 'movie', 'Dirty Grandpa', 2016), (2, '194764', 'TV Shows', 'show', '1923', 2022)`,
+		// Movie: poster from LowPriority's set, although willtong93 is prioritized.
+		`INSERT INTO SavedItems VALUES ('291870', 'Movies', 'set-a', 1, 0, 0, 0, 0, '2026-01-01')`,
+		`INSERT INTO ImageFiles VALUES ('` + uuid(1) + `', 'poster', NULL, NULL, 'set-a', '291870')`,
+		// Show: season 1 poster and S1E1 card from the "complete" set, not willtong93's.
+		`INSERT INTO SavedItems VALUES ('194764', 'TV Shows', 'complete', 0, 0, 1, 0, 1, '2026-01-02')`,
+		`INSERT INTO ImageFiles VALUES ('` + uuid(12) + `', 'season_poster', 1, NULL, 'complete', '194764'),
+			('` + uuid(14) + `', 'titlecard', 1, 1, 'complete', '194764')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+}
+
+func TestAuraPicksWinOverCreatorPriority(t *testing.T) {
+	path := t.TempDir() + "/AURA.db"
+	writeAuraDB(t, path)
+	h := newHarness(t, func(s *settings) {
+		s.AuraDB = path
+		s.SeasonConsistency, s.TitlecardConsistency = modeCreatorPriority, modeCreatorPriority
+	})
+	movie := metadata(t, h.get(t, "/movies/library/metadata/tmdb-291870"))[0]
+	if assetOf(movie["thumb"]) != uuid(1) {
+		t.Errorf("movie poster should be the AURA pick, got %v", movie["thumb"])
+	}
+	if assetOf(movie["art"]) != uuid(2) {
+		t.Errorf("background should come from the AURA poster's set, got %v", movie["art"])
+	}
+	s1 := metadata(t, h.get(t, "/tv/library/metadata/tmdb-194764-s1?includeChildren=1"))[0]
+	if assetOf(s1["thumb"]) != uuid(12) {
+		t.Errorf("season 1 poster should be the AURA pick, got %v", s1["thumb"])
+	}
+	eps := s1["Children"].(map[string]any)["Metadata"].([]any)
+	if got := assetOf(eps[0].(map[string]any)["thumb"]); got != uuid(14) {
+		t.Errorf("S1E1 card should be the AURA pick, got %v", got)
+	}
+	// Not pinned: S1E2 still follows creator priority (willtong93's set).
+	if got := assetOf(eps[1].(map[string]any)["thumb"]); got != uuid(23) {
+		t.Errorf("S1E2 card should follow creator priority, got %v", got)
+	}
+	out := h.get(t, "/api/aura")
+	if st := out["status"].(map[string]any); st["movies"].(float64) != 1 || st["shows"].(float64) != 1 {
+		t.Errorf("AURA status: %v", st)
+	}
+}
+
+func TestMissingAuraDatabaseIsHarmless(t *testing.T) {
+	h := newHarness(t, func(s *settings) { s.AuraDB = "/nowhere/AURA.db" })
+	movie := metadata(t, h.get(t, "/movies/library/metadata/tmdb-291870"))[0]
+	if assetOf(movie["thumb"]) != uuid(3) {
+		t.Errorf("without AURA, creator priority applies: %v", movie["thumb"])
+	}
+	if st := h.get(t, "/api/aura")["status"].(map[string]any); st["found"] != false {
+		t.Errorf("status should say not found: %v", st)
+	}
+}
+
+// fakePlex records refresh requests for the watcher test.
+type fakePlex struct {
+	mu        sync.Mutex
+	refreshed []string
+}
+
+func (f *fakePlex) server(t *testing.T) *httptest.Server {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Plex-Token") != "plex-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch {
+		case r.URL.Path == "/":
+			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"friendlyName": "Unlimited-Primary"}})
+		case r.URL.Path == "/library/sections":
+			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Directory": []any{
+				map[string]any{"key": "1", "type": "show"}, map[string]any{"key": "2", "type": "artist"}}}})
+		case r.URL.Path == "/library/sections/1/all":
+			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Metadata": []any{
+				map[string]any{"ratingKey": "777", "Guid": []any{map[string]any{"id": "imdb://tt1"}, map[string]any{"id": "tmdb://194764"}}}}}})
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/refresh"):
+			f.mu.Lock()
+			f.refreshed = append(f.refreshed, r.URL.Path)
+			f.mu.Unlock()
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestWatcherRefreshesPlexAndPostsToDiscordOnNewArtwork(t *testing.T) {
+	fp := &fakePlex{}
+	plexSrv := fp.server(t)
+	var posts atomic.Int32
+	var lastPost string
+	var postMu sync.Mutex
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		postMu.Lock()
+		lastPost = string(raw)
+		postMu.Unlock()
+		posts.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(hook.Close)
+
+	h := newHarness(t, func(s *settings) {
+		s.PlexServers = []plexServer{{Name: "Unlimited-Primary", URL: plexSrv.URL, Token: "plex-token"}}
+		s.DiscordWebhook = "https://discord.com/api/webhooks/1/abc"
+	})
+	// Plex scans the show: the watcher records what it was given.
+	metadata(t, h.post(t, "/tv/library/metadata/matches", map[string]any{"type": 2, "title": "1923", "includeChildren": 1}))
+
+	ctx := context.Background()
+	if n := h.app.watch.checkDue(ctx, true); n != 0 {
+		t.Fatalf("nothing changed on Mediux yet, but %d titles were flagged", n)
+	}
+	// A creator uploads the S2E3 title card.
+	extraCard.Store(true)
+	if n := h.app.watch.checkDue(ctx, true); n != 1 {
+		t.Fatalf("want 1 title with new artwork, got %d", n)
+	}
+	if len(fp.refreshed) != 1 || fp.refreshed[0] != "/library/metadata/777/refresh" {
+		t.Fatalf("Plex refreshes: %v", fp.refreshed)
+	}
+	// Send the queued Discord message to the test webhook.
+	if err := h.app.discord.send(ctx, hook.URL, h.app.discord.queue); err != nil {
+		t.Fatal(err)
+	}
+	postMu.Lock()
+	if !strings.Contains(lastPost, "S2E3") || !strings.Contains(lastPost, "Unlimited-Primary") {
+		t.Errorf("Discord message should name the new card and the server: %s", lastPost)
+	}
+	postMu.Unlock()
+
+	// Changing your own creator order is not "new artwork": no refresh, no message.
+	s := h.store.get()
+	s.PriorityCreators = []string{"Someone"}
+	if err := h.store.save(s); err != nil {
+		t.Fatal(err)
+	}
+	if n := h.app.watch.checkDue(ctx, true); n != 0 {
+		t.Fatalf("a settings change must not count as new artwork, got %d", n)
+	}
+	if len(fp.refreshed) != 1 {
+		t.Fatalf("no extra Plex refreshes expected: %v", fp.refreshed)
+	}
+}
+
+func TestPlexTokensAndWebhookAreKeptAndHidden(t *testing.T) {
+	h := newHarness(t, func(s *settings) {
+		s.PlexServers = []plexServer{{Name: "Main", URL: "http://10.0.0.5:32400", Token: "secret-plex"}}
+		s.DiscordWebhook = "https://discord.com/api/webhooks/1/abc"
+	})
+	got := h.get(t, "/api/settings")
+	raw, _ := json.Marshal(got)
+	if strings.Contains(string(raw), "secret-plex") || strings.Contains(string(raw), "webhooks/1/abc") {
+		t.Fatalf("secrets leaked to the page: %s", raw)
+	}
+	if got["discord_configured"] != true || got["plex_servers"].([]any)[0].(map[string]any)["has_token"] != true {
+		t.Fatalf("page should know secrets are set: %s", raw)
+	}
+	// Save the page's view back (blank secrets) and check they are kept.
+	got["plex_servers"] = []any{map[string]any{"name": "Main", "url": "http://10.0.0.5:32400/"}}
+	body, _ := json.Marshal(got)
+	req, _ := http.NewRequest(http.MethodPost, h.server.URL+"/api/settings", strings.NewReader(string(body)))
+	req.Header.Set("X-Mediux-Settings", "1")
+	decode(t, mustDo(t, req))
+	s := h.store.get()
+	if s.PlexServers[0].Token != "secret-plex" || s.DiscordWebhook == "" || s.Token != "good-token" {
+		t.Fatalf("secrets not kept: %+v", s)
+	}
+	// Correcting the address with the token left blank keeps the token too.
+	got["plex_servers"] = []any{map[string]any{"name": "Main", "url": "http://10.0.0.5:32401"}}
+	body, _ = json.Marshal(got)
+	req, _ = http.NewRequest(http.MethodPost, h.server.URL+"/api/settings", strings.NewReader(string(body)))
+	req.Header.Set("X-Mediux-Settings", "1")
+	decode(t, mustDo(t, req))
+	if s := h.store.get(); s.PlexServers[0].Token != "secret-plex" || s.PlexServers[0].URL != "http://10.0.0.5:32401" {
+		t.Fatalf("token lost when the address changed: %+v", s.PlexServers)
+	}
+}
+
+func TestDescribeSlots(t *testing.T) {
+	got := describeSlots([]string{"poster", "s2", "s2e5", "s2e6"})
+	if got != "poster; season posters 2; title cards S2E5, S2E6" {
+		t.Errorf("got %q", got)
 	}
 }

@@ -1,5 +1,5 @@
-# Paste this into Dockhand as a new stack. Nothing here needs editing:
-# everything else is set on the settings page at http://<server-ip>:38600
+# Paste this into Dockhand as a new stack. Everything else is set on the
+# settings page at http://<server-ip>:38600
 services:
   plex-plugin-mediux:
     image: ghcr.io/jjbobzin/plex-plugin-mediux:latest
@@ -10,3 +10,6 @@ services:
       - "38600:32600"
     volumes:
       - /mnt/cache/appdata/plex-plugin-mediux:/config
+      # Optional: use the sets you saved in AURA. Point this at the folder
+      # holding AURA.db; the settings page then reads /aura/AURA.db.
+      # - /mnt/cache/appdata/aura:/aura:ro
