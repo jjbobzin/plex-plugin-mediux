@@ -16,15 +16,15 @@ been tested so far.
 
 1. **Run the container.** Use [docker-compose.yml](docker-compose.yml) as is,
    for example as a new stack in Dockhand or Portainer. It publishes port
-   `38600` and keeps its settings in `/mnt/user/appdata/plex-plugin-mediux`
+   `32600` and keeps its settings in `/mnt/user/appdata/plex-plugin-mediux`
    (change the left side of the volume if you are not on Unraid).
-2. **Open the settings page** at `http://<server-ip>:38600` and paste your
+2. **Open the settings page** at `http://<server-ip>:32600` and paste your
    Mediux API token (from your account settings on mediux.pro). Choose your
    creators and artwork options, then save. Nothing is configured through
    environment variables or files.
 3. **Add the providers in Plex:** Settings → Metadata Agents → Add Provider,
-   once with `http://<server-ip>:38600/movies` and once with
-   `http://<server-ip>:38600/tv`.
+   once with `http://<server-ip>:32600/movies` and once with
+   `http://<server-ip>:32600/tv`.
 4. **Create an agent for each:** pick **Plex Movie** (or **Plex Series**) as
    the Primary, add **Mediux Artwork**, and drag it to the top so its artwork
    wins. The Primary cannot be changed after the agent is created.
@@ -38,7 +38,7 @@ an exact title and year match.
 **Opening the settings page from outside your home network:** put it behind a
 reverse proxy that asks for a login (Pangolin, Authelia, Cloudflare Access and
 so on). The page holds your Mediux key, so don't expose it without one. Plex
-keeps using the local `http://<server-ip>:38600/...` addresses either way.
+keeps using the local `http://<server-ip>:32600/...` addresses either way.
 
 The settings page also has a **Try it** preview, to see what your settings
 pick for any title, and a **Recent activity** list of what Plex asked for.
