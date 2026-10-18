@@ -124,6 +124,8 @@ func (c *mediuxClient) queryWithToken(ctx context.Context, token, operation, q s
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	// Mediux sits behind Cloudflare, which blocks requests without a clear client name.
+	req.Header.Set("User-Agent", "plex-plugin-mediux/"+version)
 	select {
 	case c.sem <- struct{}{}:
 	case <-ctx.Done():
@@ -436,40 +438,39 @@ type titleMatch struct {
 
 // searchMovies finds Mediux movies by title. Used only when the file name has no ID.
 func (c *mediuxClient) searchMovies(ctx context.Context, title string) ([]titleMatch, error) {
-	var out struct {
-		Movies []struct {
-			ID      string `json:"id"`
-			Title   string `json:"title"`
-			Release string `json:"release_date"`
-		} `json:"movies"`
-	}
-	q := `query($q:String!){movies(limit:25,filter:{title:{_icontains:$q}}){id title release_date}}`
-	if err := c.query(ctx, "movie title search", q, map[string]any{"q": title}, &out); err != nil {
-		return nil, err
-	}
-	var res []titleMatch
-	for _, m := range out.Movies {
-		res = append(res, titleMatch{m.ID, m.Title, m.Release})
-	}
-	return res, nil
+	return c.searchTitles(ctx, "movies", "release_date", title)
 }
 
 // searchShows finds Mediux shows by title. Used only when other lookups fail.
 func (c *mediuxClient) searchShows(ctx context.Context, title string) ([]titleMatch, error) {
-	var out struct {
-		Shows []struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
-			Air   string `json:"first_air_date"`
-		} `json:"shows"`
-	}
-	q := `query($q:String!){shows(limit:25,filter:{title:{_icontains:$q}}){id title first_air_date}}`
-	if err := c.query(ctx, "show title search", q, map[string]any{"q": title}, &out); err != nil {
+	return c.searchTitles(ctx, "shows", "first_air_date", title)
+}
+
+// searchTitles asks for exact title matches (Mediux compares them without
+// regard to case) and, as a backup, titles containing the text. Exact matches
+// come first: a "contains" search alone misses titles like "1917", whose
+// first 25 hits are other films with 1917 in the name.
+func (c *mediuxClient) searchTitles(ctx context.Context, collection, dateField, title string) ([]titleMatch, error) {
+	fields := "{id title " + dateField + "}"
+	q := "query($q:String!){exact:" + collection + "(limit:50,filter:{title:{_eq:$q}})" + fields +
+		" near:" + collection + "(limit:25,filter:{title:{_icontains:$q}})" + fields + "}"
+	var out map[string][]map[string]any
+	if err := c.query(ctx, collection+" title search", q, map[string]any{"q": title}, &out); err != nil {
 		return nil, err
 	}
 	var res []titleMatch
-	for _, m := range out.Shows {
-		res = append(res, titleMatch{m.ID, m.Title, m.Air})
+	seen := map[string]bool{}
+	for _, group := range []string{"exact", "near"} {
+		for _, m := range out[group] {
+			id, _ := m["id"].(string)
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			t, _ := m["title"].(string)
+			d, _ := m[dateField].(string)
+			res = append(res, titleMatch{id, t, d})
+		}
 	}
 	return res, nil
 }

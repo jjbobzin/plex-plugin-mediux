@@ -100,8 +100,13 @@ func fakeMediux(t *testing.T) *httptest.Server {
 			} else {
 				data = map[string]any{"shows": []any{}}
 			}
-		case strings.Contains(body.Query, "movies(limit:25"):
-			data = map[string]any{"movies": []any{
+		case strings.Contains(body.Query, "exact:movies"):
+			// Exact matches ignore case; "near" holds titles containing the text.
+			var exact []any
+			if strings.EqualFold(fmt.Sprint(body.Variables["q"]), "Dirty Grandpa") {
+				exact = []any{map[string]any{"id": "291870", "title": "Dirty Grandpa", "release_date": "2016-01-22"}}
+			}
+			data = map[string]any{"exact": exact, "near": []any{
 				map[string]any{"id": "1", "title": "Dirty Grandpa Returns", "release_date": "2030-01-01"},
 				map[string]any{"id": "291870", "title": "Dirty Grandpa", "release_date": "2016-01-22"},
 			}}

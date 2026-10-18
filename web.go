@@ -160,28 +160,32 @@ func (ui *webUI) preview(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	tmdb, how := q, "TMDB ID"
-	if _, err := strconv.Atoi(q); err != nil {
-		var err error
-		h := hints{}
-		if kind == "movie" {
-			h.Title = q
-			tmdb, how, err = ui.ids.movie(ctx, h)
+	// Titles come first: shows like "1923" or "24" are numbers. A number with
+	// no exact title match is treated as a TMDB ID.
+	var tmdb, how string
+	var err error
+	title, year := splitYear(q, 0)
+	h := hints{Title: title, Year: year}
+	if kind == "movie" {
+		tmdb, how, err = ui.ids.movie(ctx, h)
+	} else {
+		tmdb, how, err = ui.ids.show(ctx, q, h)
+	}
+	if err != nil {
+		writeJSON(w, 502, map[string]string{"error": err.Error()})
+		return
+	}
+	if tmdb == "" {
+		if _, numErr := strconv.Atoi(q); numErr == nil {
+			tmdb, how = q, "TMDB ID"
 		} else {
-			tmdb, how, err = ui.ids.show(ctx, q, h)
-		}
-		if err != nil {
-			writeJSON(w, 502, map[string]string{"error": err.Error()})
-			return
-		}
-		if tmdb == "" {
 			writeJSON(w, 404, map[string]string{"error": "No exact title match. Try the title with its year, like \"1923 (2022)\", or the TMDB ID."})
 			return
 		}
 	}
 	cfg := ui.settings.get()
 	direct := func(a artwork) string { return imageURL(a, cfg.Quality) }
-	var images []previewImage
+	images := []previewImage{}
 	if kind == "movie" {
 		b, err := ui.mediux.artwork(ctx, typeMovie, tmdb)
 		if err != nil {
