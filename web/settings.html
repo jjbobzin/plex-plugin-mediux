@@ -110,6 +110,9 @@
   <section>
     <h2>Add to Plex</h2>
     <p class="sub">Add both addresses in Plex under Settings → Metadata Agents → Add Provider.</p>
+    <label for="plexAddr">Your server's local address, as Plex reaches it</label>
+    <input type="text" id="plexAddr" placeholder="For example 192.168.1.10:38600" autocomplete="off" spellcheck="false">
+    <p class="hint">Include the port, the one on the left of <code>ports:</code> in your compose file. Use the local IP, never an address behind a login page (like Pangolin): Plex can't sign in.</p>
     <div class="urls">
       <div class="url"><span class="k">Movies</span><code id="urlMovies"></code><button type="button" data-copy="urlMovies">Copy</button></div>
       <div class="url"><span class="k">TV</span><code id="urlTV"></code><button type="button" data-copy="urlTV">Copy</button></div>
@@ -453,8 +456,22 @@ $("refreshActivity").onclick = loadActivity;
 
 window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
 
-$("urlMovies").textContent = location.origin + "/movies";
-$("urlTV").textContent = location.origin + "/tv";
+// Plex needs the server's local address and port. This page may be opened
+// through a proxy, so nothing is guessed: the person types it once and this
+// browser remembers it.
+function showPlexURLs() {
+  let addr = $("plexAddr").value.trim().replace(/^https?:\/\//i, "").replace(/[\/?#].*$/, "");
+  if ((addr.match(/:/g) || []).length > 1 && !addr.startsWith("[")) addr = "[" + addr + "]"; // bare IPv6
+  const base = "http://" + (addr || "<server-ip>:<port>");
+  $("urlMovies").textContent = base + "/movies";
+  $("urlTV").textContent = base + "/tv";
+}
+try { $("plexAddr").value = localStorage.getItem("plexAddr") || ""; } catch (_) {}
+$("plexAddr").addEventListener("input", () => {
+  try { localStorage.setItem("plexAddr", $("plexAddr").value.trim()); } catch (_) {}
+  showPlexURLs();
+});
+showPlexURLs();
 api("/api/settings").then(fill).catch((e) => setMsg($("saveMsg"), e.message, false));
 loadActivity();
 setInterval(loadActivity, 15000);

@@ -4,3 +4,6 @@ test-provider/items.json
 
 .DS_Store
 __pycache__/
+
+# Local build output
+/plex-plugin-mediux

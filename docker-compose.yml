@@ -1,11 +1,11 @@
 # Paste this into Dockhand as a new stack. Nothing here needs editing:
-# everything else is set on the settings page at http://<server-ip>:32600
+# everything else is set on the settings page at http://<server-ip>:38600
 services:
   plex-plugin-mediux:
     image: ghcr.io/jjbobzin/plex-plugin-mediux:latest
     container_name: plex-plugin-mediux
     restart: unless-stopped
     ports:
-      - "32600:32600"
+      - "38600:32600"
     volumes:
       - /mnt/user/appdata/plex-plugin-mediux:/config
