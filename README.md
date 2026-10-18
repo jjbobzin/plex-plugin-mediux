@@ -16,8 +16,8 @@ been tested so far.
 
 1. **Run the container.** Use [docker-compose.yml](docker-compose.yml) as is,
    for example as a new stack in Dockhand or Portainer. It publishes port
-   `32600` and keeps its settings in `/mnt/user/appdata/plex-plugin-mediux`
-   (change the left side of the volume if you are not on Unraid).
+   `32600` and keeps its settings in `/mnt/cache/appdata/plex-plugin-mediux`
+   (change the left side of the volume to your own appdata location).
 2. **Open the settings page** at `http://<server-ip>:32600` and paste your
    Mediux API token (from your account settings on mediux.pro). Choose your
    creators and artwork options, then save. Nothing is configured through

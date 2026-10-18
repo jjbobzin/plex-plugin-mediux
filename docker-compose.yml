@@ -8,4 +8,4 @@ services:
     ports:
       - "32600:32600"
     volumes:
-      - /mnt/user/appdata/plex-plugin-mediux:/config
+      - /mnt/cache/appdata/plex-plugin-mediux:/config
