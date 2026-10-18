@@ -1,0 +1,6 @@
+# Test provider output (contains server details)
+test-provider/requests.log
+test-provider/items.json
+
+.DS_Store
+__pycache__/
