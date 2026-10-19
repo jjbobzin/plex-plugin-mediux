@@ -563,7 +563,9 @@ func (f *fakePlex) server(t *testing.T) *httptest.Server {
 				map[string]any{"key": "1", "type": "show"}, map[string]any{"key": "2", "type": "artist"}}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/library/sections/1/all":
 			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Metadata": []any{
-				map[string]any{"ratingKey": "777", "Guid": []any{map[string]any{"id": "imdb://tt1"}, map[string]any{"id": "tmdb://194764"}}}}}})
+				// Real Plex sends both "guid" (one plex:// string) and "Guid" (a list).
+				map[string]any{"ratingKey": "777", "guid": "plex://show/5d9c086c46115600200aa2fe",
+					"Guid": []any{map[string]any{"id": "imdb://tt1"}, map[string]any{"id": "tmdb://194764"}}}}}})
 		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/refresh"):
 			f.mu.Lock()
 			f.refreshed = append(f.refreshed, r.URL.Path)

@@ -102,14 +102,12 @@ func (pc *plexClient) index(ctx context.Context, srv plexServer, maxAge time.Dur
 		if kind == "" {
 			continue
 		}
+		// Items are read as raw fields because Plex sends both "guid" (one
+		// plex:// string) and "Guid" (the list of external IDs), and Go's JSON
+		// decoder matches field names without regard to case.
 		var all struct {
 			MediaContainer struct {
-				Metadata []struct {
-					RatingKey string `json:"ratingKey"`
-					Guid      []struct {
-						ID string `json:"id"`
-					} `json:"Guid"`
-				} `json:"Metadata"`
+				Metadata []map[string]json.RawMessage `json:"Metadata"`
 			} `json:"MediaContainer"`
 		}
 		path := "/library/sections/" + url.PathEscape(d.Key) + "/all?includeGuids=1"
@@ -117,10 +115,17 @@ func (pc *plexClient) index(ctx context.Context, srv plexServer, maxAge time.Dur
 			return nil, err
 		}
 		for _, m := range all.MediaContainer.Metadata {
-			for _, g := range m.Guid {
+			var ratingKey string
+			var guids []struct {
+				ID string `json:"id"`
+			}
+			if json.Unmarshal(m["ratingKey"], &ratingKey) != nil || json.Unmarshal(m["Guid"], &guids) != nil {
+				continue
+			}
+			for _, g := range guids {
 				if id, ok := strings.CutPrefix(g.ID, "tmdb://"); ok {
 					k := string(kind) + ":" + id
-					built.items[k] = append(built.items[k], plexRef{m.RatingKey, d.Key})
+					built.items[k] = append(built.items[k], plexRef{ratingKey, d.Key})
 				}
 			}
 		}

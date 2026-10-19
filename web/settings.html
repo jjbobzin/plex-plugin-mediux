@@ -171,6 +171,9 @@
   .badge.warn { background: rgba(245,181,68,.13); color: var(--warn); }
   .collection { margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
   .collection ul { margin: 6px 0 10px; padding-left: 18px; color: var(--muted); font-size: 13.5px; }
+  .strip.movies img { width: 96px; }
+  .strip.movies figure.current > :first-child { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .strip.movies figcaption { max-width: 96px; overflow-wrap: anywhere; }
 
   .pills { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 4px; }
   .pills button { border-radius: 999px; padding: 6px 14px; }
@@ -1146,6 +1149,9 @@ function renderSets() {
         onclick: () => { for (const [k] of offered) staged[k] = all ? "" : set.id; renderSets(); } }));
     }
     if (set.collection && setsData.type === "movie") {
+      const holder = el("div", {}, el("div", { class: "striplabel", text: "In this collection" }), el("p", { class: "hint", text: "Loading…" }));
+      card.append(holder);
+      loadCollectionStrip(holder, set);
       parts.append(el("button", { type: "button", class: "ghost", text: "Use for every movie in this collection…",
         onclick: () => showCollection(card, set) }));
     }
@@ -1154,6 +1160,34 @@ function renderSets() {
     box.append(card);
   }
 }
+// Collection lookups are shared between the strip and the apply panel.
+const collectionCache = {};
+function collectionMovies(id) {
+  if (!collectionCache[id]) {
+    collectionCache[id] = api("/api/collection?id=" + id).then((d) => d.movies)
+      .catch((e) => { delete collectionCache[id]; throw e; }); // let a later try fetch again
+  }
+  return collectionCache[id];
+}
+
+// loadCollectionStrip shows every movie's poster from a collection set.
+async function loadCollectionStrip(holder, set) {
+  let movies;
+  try { movies = await collectionMovies(set.id); }
+  catch (e) { holder.lastChild.textContent = e.message; return; }
+  const strip = el("div", { class: "strip movies" });
+  for (const m of movies) {
+    const name = m.title + (m.year ? " (" + m.year + ")" : "");
+    const img = m.poster_url ? el("img", { src: m.poster_url, alt: name, loading: "lazy" })
+      : el("div", { class: "hint", style: "width:96px;height:144px;display:grid;place-items:center", text: "No poster" });
+    const fig = el("figure", { title: name }, img, el("figcaption", { text: name }));
+    if (String(m.tmdb) === String(setsData.tmdb)) fig.classList.add("current");
+    strip.append(fig);
+  }
+  holder.lastChild.replaceWith(strip);
+  holder.firstChild.textContent = "In this collection (" + movies.length + ")";
+}
+
 // showCollection lists the movies a collection set covers and applies it to all of them.
 async function showCollection(card, set) {
   let panel = card.querySelector(".collection");
@@ -1161,7 +1195,7 @@ async function showCollection(card, set) {
   panel = el("div", { class: "collection" }, el("p", { class: "hint", text: "Loading the collection…" }));
   card.append(panel);
   let movies;
-  try { movies = (await api("/api/collection?id=" + set.id)).movies; }
+  try { movies = await collectionMovies(set.id); }
   catch (e) { panel.firstChild.textContent = e.message; return; }
   panel.innerHTML = "";
   const list = el("ul");

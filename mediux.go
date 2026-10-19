@@ -713,11 +713,13 @@ func (c *mediuxClient) titleOf(ctx context.Context, typ mediaType, tmdbID string
 
 // collectionMovie is one movie a collection set has artwork for.
 type collectionMovie struct {
-	TMDB       string `json:"tmdb"`
-	Title      string `json:"title"`
-	Year       int    `json:"year,omitempty"`
-	Poster     bool   `json:"poster"`
-	Background bool   `json:"background"`
+	TMDB          string `json:"tmdb"`
+	Title         string `json:"title"`
+	Year          int    `json:"year,omitempty"`
+	Poster        bool   `json:"poster"`
+	Background    bool   `json:"background"`
+	PosterURL     string `json:"poster_url,omitempty"`
+	BackgroundURL string `json:"background_url,omitempty"`
 }
 
 var (
@@ -739,7 +741,9 @@ func (c *mediuxClient) collectionMovies(ctx context.Context, setID string) ([]co
 	}
 	collectionMu.Unlock()
 	type file struct {
-		Movie *struct {
+		ID       string `json:"id"`
+		Modified string `json:"modified_on"`
+		Movie    *struct {
 			ID      string `json:"id"`
 			Title   string `json:"title"`
 			Release string `json:"release_date"`
@@ -751,7 +755,7 @@ func (c *mediuxClient) collectionMovies(ctx context.Context, setID string) ([]co
 			Backdrops []file `json:"movie_backdrops"`
 		} `json:"collection_sets_by_id"`
 	}
-	q := `query($id: ID!){collection_sets_by_id(id:$id){movie_posters(limit:-1){movie{id title release_date}} movie_backdrops(limit:-1){movie{id title release_date}}}}`
+	q := `query($id: ID!){collection_sets_by_id(id:$id){movie_posters(limit:-1){id modified_on movie{id title release_date}} movie_backdrops(limit:-1){id modified_on movie{id title release_date}}}}`
 	if err := c.query(ctx, "collection set", q, map[string]any{"id": setID}, &out); err != nil {
 		return nil, err
 	}
@@ -767,10 +771,17 @@ func (c *mediuxClient) collectionMovies(ctx context.Context, setID string) ([]co
 			byID[f.Movie.ID] = m
 			order = append(order, f.Movie.ID)
 		}
+		at, _ := time.Parse(time.RFC3339Nano, f.Modified)
 		if poster {
 			m.Poster = true
+			if m.PosterURL == "" && assetID.MatchString(f.ID) {
+				m.PosterURL = imageURL(artwork{ID: f.ID, Kind: kindPoster, Modified: at}, "optimized")
+			}
 		} else {
 			m.Background = true
+			if m.BackgroundURL == "" && assetID.MatchString(f.ID) {
+				m.BackgroundURL = imageURL(artwork{ID: f.ID, Kind: kindBackdrop, Modified: at}, "optimized")
+			}
 		}
 	}
 	if out.Set != nil {
