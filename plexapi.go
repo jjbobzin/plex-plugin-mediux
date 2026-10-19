@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -197,8 +198,17 @@ func (pc *plexClient) refresh(ctx context.Context, servers []plexServer, typ med
 				refs = idx.items[string(typ)+":"+tmdb]
 			}
 		}
+		var live map[string]bool // library agents read just now, for unlocking
+		if replaceLocked && len(refs) > 0 {
+			if live, err = pc.customSections(ctx, srv); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+		}
 		for _, ref := range refs {
-			if !ref.Custom {
+			// The index can be hours old; before unlocking, trust only the
+			// library's agent as Plex reports it right now.
+			if !ref.Custom || replaceLocked && !live[ref.Section] {
 				res.Skipped = append(res.Skipped, ref.Library+" on "+srv.Name)
 				continue
 			}
@@ -216,6 +226,26 @@ func (pc *plexClient) refresh(ctx context.Context, servers []plexServer, typ med
 		}
 	}
 	return res, errors.Join(errs...)
+}
+
+// customSections reads which libraries use a custom agent right now.
+func (pc *plexClient) customSections(ctx context.Context, srv plexServer) (map[string]bool, error) {
+	var sections struct {
+		MediaContainer struct {
+			Directory []struct {
+				Key   string `json:"key"`
+				Agent string `json:"agent"`
+			} `json:"Directory"`
+		} `json:"MediaContainer"`
+	}
+	if err := pc.do(ctx, srv, http.MethodGet, "/library/sections", &sections); err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, d := range sections.MediaContainer.Directory {
+		out[d.Key] = !builtInAgent(d.Agent)
+	}
+	return out, nil
 }
 
 // Plex's numeric item types for library edits.
@@ -322,68 +352,64 @@ func (pc *plexClient) current(ctx context.Context, servers []plexServer, typ med
 		if srv.Token == "" {
 			continue
 		}
-		cur := plexCurrent{Server: srv.Name}
 		idx, err := pc.index(ctx, srv, 6*time.Hour)
 		if err != nil {
-			cur.Error = err.Error()
-			out = append(out, cur)
+			out = append(out, plexCurrent{Server: srv.Name, Error: err.Error()})
 			continue
 		}
-		refs := idx.items[string(typ)+":"+tmdb]
-		if len(refs) == 0 {
-			continue // not on this server
+		refs := append([]plexRef(nil), idx.items[string(typ)+":"+tmdb]...)
+		// Every library holding the title, Mediux-agent libraries first.
+		sort.SliceStable(refs, func(a, b int) bool { return refs[a].Custom && !refs[b].Custom })
+		for _, ref := range refs {
+			out = append(out, pc.currentIn(ctx, i, srv, typ, ref))
 		}
-		ref := refs[0]
-		for _, r := range refs {
-			if r.Custom { // show the copy Mediux can change, if there is one
-				ref = r
-				break
-			}
+	}
+	return out
+}
+
+// currentIn reads the artwork one library shows for a title.
+func (pc *plexClient) currentIn(ctx context.Context, i int, srv plexServer, typ mediaType, ref plexRef) plexCurrent {
+	cur := plexCurrent{Server: srv.Name, Library: ref.Library, Custom: ref.Custom}
+	var meta struct {
+		MediaContainer struct {
+			Metadata []plexItem `json:"Metadata"`
+		} `json:"MediaContainer"`
+	}
+	if err := pc.do(ctx, srv, http.MethodGet, "/library/metadata/"+url.PathEscape(ref.Key), &meta); err != nil || len(meta.MediaContainer.Metadata) == 0 {
+		if err != nil {
+			cur.Error = err.Error()
 		}
-		cur.Library, cur.Custom = ref.Library, ref.Custom
-		var meta struct {
+		return cur
+	}
+	m := meta.MediaContainer.Metadata[0]
+	cur.Title = m.Title
+	cur.Poster = plexImageURL(i, m.Thumb, 300, 450)
+	cur.Background = plexImageURL(i, m.Art, 480, 270)
+	for _, f := range m.Field {
+		if f.Name == "thumb" && f.Locked {
+			cur.Locked = true
+		}
+	}
+	for _, l := range m.Label {
+		if l.Tag == "Overlay" {
+			cur.Overlay = true
+		}
+	}
+	if typ == typeShow {
+		var kids struct {
 			MediaContainer struct {
 				Metadata []plexItem `json:"Metadata"`
 			} `json:"MediaContainer"`
 		}
-		if err := pc.do(ctx, srv, http.MethodGet, "/library/metadata/"+url.PathEscape(ref.Key), &meta); err != nil || len(meta.MediaContainer.Metadata) == 0 {
-			if err != nil {
-				cur.Error = err.Error()
-			}
-			out = append(out, cur)
-			continue
-		}
-		m := meta.MediaContainer.Metadata[0]
-		cur.Title = m.Title
-		cur.Poster = plexImageURL(i, m.Thumb, 300, 450)
-		cur.Background = plexImageURL(i, m.Art, 480, 270)
-		for _, f := range m.Field {
-			if f.Name == "thumb" && f.Locked {
-				cur.Locked = true
-			}
-		}
-		for _, l := range m.Label {
-			if l.Tag == "Overlay" {
-				cur.Overlay = true
-			}
-		}
-		if typ == typeShow {
-			var kids struct {
-				MediaContainer struct {
-					Metadata []plexItem `json:"Metadata"`
-				} `json:"MediaContainer"`
-			}
-			if err := pc.do(ctx, srv, http.MethodGet, "/library/metadata/"+url.PathEscape(ref.Key)+"/children", &kids); err == nil {
-				for _, k := range kids.MediaContainer.Metadata {
-					if k.Thumb != "" {
-						cur.Seasons = append(cur.Seasons, setImage{Season: k.Index, URL: plexImageURL(i, k.Thumb, 150, 225)})
-					}
+		if err := pc.do(ctx, srv, http.MethodGet, "/library/metadata/"+url.PathEscape(ref.Key)+"/children", &kids); err == nil {
+			for _, k := range kids.MediaContainer.Metadata {
+				if k.Thumb != "" {
+					cur.Seasons = append(cur.Seasons, setImage{Season: k.Index, URL: plexImageURL(i, k.Thumb, 150, 225)})
 				}
 			}
 		}
-		out = append(out, cur)
 	}
-	return out
+	return cur
 }
 
 func plexImageURL(server int, path string, w, h int) string {

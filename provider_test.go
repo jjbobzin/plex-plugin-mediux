@@ -544,9 +544,10 @@ func TestMissingAuraDatabaseIsHarmless(t *testing.T) {
 
 // fakePlex records refresh requests for the watcher test.
 type fakePlex struct {
-	mu        sync.Mutex
-	refreshed []string
-	edits     []string // library edit queries, in order
+	mu           sync.Mutex
+	refreshed    []string
+	edits        []string // library edit queries, in order
+	switchedBack bool     // zMediux TV now reports the Plex Series agent
 }
 
 func (f *fakePlex) server(t *testing.T) *httptest.Server {
@@ -559,8 +560,14 @@ func (f *fakePlex) server(t *testing.T) *httptest.Server {
 		case r.URL.Path == "/":
 			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"friendlyName": "Unlimited-Primary"}})
 		case r.URL.Path == "/library/sections":
+			f.mu.Lock()
+			agent := "tv.plex.agents.custom.abc123"
+			if f.switchedBack {
+				agent = "tv.plex.agents.series"
+			}
+			f.mu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Directory": []any{
-				map[string]any{"key": "1", "type": "show", "title": "zMediux TV", "agent": "tv.plex.agents.custom.abc123"},
+				map[string]any{"key": "1", "type": "show", "title": "zMediux TV", "agent": agent},
 				map[string]any{"key": "2", "type": "artist", "title": "Music", "agent": "tv.plex.agents.music"},
 				// The same show in a library still on Plex Series: never touched.
 				map[string]any{"key": "3", "type": "show", "title": "TV Shows", "agent": "tv.plex.agents.series"}}}})
@@ -589,6 +596,9 @@ func (f *fakePlex) server(t *testing.T) *httptest.Server {
 				"title": "1923", "thumb": "/library/metadata/777/thumb/9", "art": "/library/metadata/777/art/9",
 				"Field": []any{map[string]any{"name": "thumb", "locked": true}},
 				"Label": []any{map[string]any{"tag": "Overlay"}}}}}})
+		case r.URL.Path == "/library/metadata/333":
+			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Metadata": []any{map[string]any{
+				"title": "1923", "thumb": "/library/metadata/333/thumb/1", "art": "/library/metadata/333/art/1"}}}})
 		case r.URL.Path == "/photo/:/transcode":
 			if !strings.HasPrefix(r.URL.Query().Get("url"), "/library/metadata/") {
 				w.WriteHeader(http.StatusBadRequest)
@@ -803,6 +813,21 @@ func TestSavingAPickUnlocksAndRefreshesPlex(t *testing.T) {
 			t.Errorf("unlock edits missing %q in:\n%s", want, all)
 		}
 	}
+	// If zMediux TV is switched back to Plex Series after the index was built,
+	// a pick must not unlock anything there.
+	fp.mu.Lock()
+	fp.switchedBack = true
+	fp.edits, fp.refreshed = nil, nil
+	fp.mu.Unlock()
+	savePick(t, h, map[string]any{"type": "show", "tmdb": "194764", "title": "1923", "season_set": "complete"})
+	time.Sleep(300 * time.Millisecond)
+	fp.mu.Lock()
+	if len(fp.edits) != 0 || len(fp.refreshed) != 0 {
+		t.Errorf("a library now on Plex Series must not be unlocked or refreshed: %v %v", fp.edits, fp.refreshed)
+	}
+	fp.switchedBack = false
+	fp.mu.Unlock()
+
 	// Without the option, nothing is unlocked.
 	s := h.store.get()
 	s.ReplaceLocked = false
@@ -830,10 +855,17 @@ func TestPlexNowShowsCurrentArtworkThroughTheContainer(t *testing.T) {
 	})
 	out := h.get(t, "/api/plex-current?type=show&tmdb=194764")
 	servers := out["servers"].([]any)
-	if len(servers) != 1 {
-		t.Fatalf("want one server, got %v", out)
+	if len(servers) != 2 {
+		t.Fatalf("want both libraries holding the show, got %v", out)
 	}
 	cur := servers[0].(map[string]any)
+	other := servers[1].(map[string]any)
+	if cur["library"] != "zMediux TV" || cur["custom"] != true || other["library"] != "TV Shows" || other["custom"] != false {
+		t.Fatalf("the Mediux-agent library should come first, then the other: %v", servers)
+	}
+	if other["error"] != nil || !strings.Contains(fmt.Sprint(other["poster"]), "%2Flibrary%2Fmetadata%2F333%2Fthumb") {
+		t.Fatalf("the second library's own artwork should be shown: %v", other)
+	}
 	if cur["locked"] != true || cur["overlay"] != true || len(cur["seasons"].([]any)) != 2 {
 		t.Fatalf("current artwork: %v", cur)
 	}
