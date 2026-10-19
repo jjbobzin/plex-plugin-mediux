@@ -23,6 +23,7 @@ type webUI struct {
 	provider *plexProvider
 	plex     *plexClient
 	discord  *discord
+	auth     *plexAuth
 	activity *activityLog
 	relay    *http.Client
 	started  time.Time
@@ -48,6 +49,9 @@ func (ui *webUI) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/collection", ui.collection)
 	mux.HandleFunc("GET /api/plex-current", ui.plexNow)
 	mux.HandleFunc("GET /api/plex-image", ui.plexImage)
+	mux.HandleFunc("POST /api/plex-auth/start", ui.guard(ui.plexAuthStart))
+	mux.HandleFunc("GET /api/plex-auth/check", ui.plexAuthCheck)
+	mux.HandleFunc("POST /api/plex-auth/add", ui.guard(ui.plexAuthAdd))
 	mux.HandleFunc("GET /img/{id}", ui.relayImage)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 }
@@ -128,22 +132,28 @@ func (ui *webUI) saveSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	// Match a blank token to the saved server by address, or by name when the
 	// address was just corrected.
-	byURL, byName := map[string]string{}, map[string]string{}
+	byURL, byName := map[string]plexServer{}, map[string]plexServer{}
 	for _, p := range current.PlexServers {
-		byURL[strings.TrimRight(p.URL, "/")] = p.Token
-		byName[p.Name] = p.Token
+		byURL[strings.TrimRight(p.URL, "/")] = p
+		byName[p.Name] = p
 	}
 	for i := range next.PlexServers {
 		p := &next.PlexServers[i]
 		p.Name, p.URL, p.Token = strings.TrimSpace(p.Name), strings.TrimRight(strings.TrimSpace(p.URL), "/"), strings.TrimSpace(p.Token)
-		if p.Token == "" {
-			p.Token = byURL[p.URL]
+		prev, ok := byURL[p.URL]
+		if !ok {
+			prev, ok = byName[p.Name]
 		}
-		if p.Token == "" {
-			p.Token = byName[p.Name]
+		p.Machine = "" // the page never sets this
+		if ok {
+			p.Machine = prev.Machine
+			if p.Token == "" {
+				p.Token = prev.Token
+			}
 		}
 	}
 	next.AuraDB = strings.TrimSpace(next.AuraDB)
+	next.PlexClientID = current.PlexClientID
 	if err := ui.settings.save(next); err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
@@ -443,4 +453,47 @@ func (ui *webUI) relayImage(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(w, io.LimitReader(res.Body, 40<<20)); err != nil && !errors.Is(err, context.Canceled) {
 		return
 	}
+}
+
+func (ui *webUI) plexAuthStart(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	session, link, err := ui.auth.start(ctx)
+	if err != nil {
+		writeJSON(w, 502, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]string{"session": session, "url": link})
+}
+
+func (ui *webUI) plexAuthCheck(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	done, servers, err := ui.auth.check(ctx, r.URL.Query().Get("session"))
+	if err != nil {
+		writeJSON(w, 502, map[string]string{"error": err.Error()})
+		return
+	}
+	if servers == nil {
+		servers = []foundServer{}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, map[string]any{"done": done, "servers": servers})
+}
+
+func (ui *webUI) plexAuthAdd(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Session  string   `json:"session"`
+		Machines []string `json:"machines"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "could not read the request"})
+		return
+	}
+	n, err := ui.auth.add(in.Session, in.Machines)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "Added " + plural(n, "server", "servers") + "."})
 }

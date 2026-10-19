@@ -48,13 +48,17 @@ type settings struct {
 	// When you pick a set on the Sets tab, also replace artwork that is
 	// locked in Plex (uploaded by AURA, Kometa or by hand).
 	ReplaceLocked bool `json:"replace_locked"`
+
+	// This install's identity when signing in with Plex (made on first use).
+	PlexClientID string `json:"plex_client_id,omitempty"`
 }
 
 // plexServer is a Plex Media Server the provider may ask to refresh items.
 type plexServer struct {
-	Name  string `json:"name"`
-	URL   string `json:"url"`
-	Token string `json:"token,omitempty"`
+	Name    string `json:"name"`
+	URL     string `json:"url"`
+	Token   string `json:"token,omitempty"`
+	Machine string `json:"machine,omitempty"` // Plex's server ID, when added by signing in
 }
 
 func defaultSettings() settings {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -864,5 +865,150 @@ func TestCollectionPickCoversEveryMovie(t *testing.T) {
 	// The second movie has no collection background, so its own stays.
 	if p := store.get(typeMovie, "555"); p == nil || p.PosterSet != "77" || p.BackSet != "set-a" {
 		t.Fatalf("Dirty Grandpa 2 pick: %+v", p)
+	}
+}
+
+// fakePMS answers /identity as one Plex server.
+func fakePMS(t *testing.T, machine string) (*httptest.Server, string) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/identity" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("X-Plex-Token") != "" {
+			t.Errorf("a server token was sent to an address before it proved to be that server")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"machineIdentifier": machine}})
+	}))
+	t.Cleanup(srv.Close)
+	port := srv.URL[strings.LastIndex(srv.URL, ":")+1:]
+	return srv, port
+}
+
+func TestSignInWithPlexFindsReachableServers(t *testing.T) {
+	primary, _ := fakePMS(t, "machine-primary")
+	_, hostPort := fakePMS(t, "machine-streamstead")
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closedURL := closed.URL
+	closed.Close() // nothing listens here any more
+
+	pinChecks := 0
+	plexTV := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Plex-Client-Identifier") == "" {
+			t.Errorf("plex.tv call without a client identifier: %s", r.URL)
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v2/pins":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 42, "code": "abcd"})
+		case r.URL.Path == "/api/v2/pins/42":
+			pinChecks++
+			token := ""
+			if pinChecks > 1 { // signed in on the second check
+				token = "user-token"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"authToken": token})
+		case r.URL.Path == "/api/v2/resources":
+			if r.Header.Get("X-Plex-Token") != "user-token" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			atoi := func(s string) int { n, _ := strconv.Atoi(s); return n }
+			_ = json.NewEncoder(w).Encode([]any{
+				map[string]any{"name": "Unlimited-Primary", "provides": "server", "clientIdentifier": "machine-primary",
+					"accessToken": "primary-token", "owned": true,
+					"connections": []any{map[string]any{"uri": primary.URL, "port": 1, "local": true}}},
+				// Like Streamstead: its local address doesn't answer from the
+				// container, but the extra host route on the same port does.
+				map[string]any{"name": "Streamstead", "provides": "server", "clientIdentifier": "machine-streamstead",
+					"accessToken": "streamstead-token", "owned": true,
+					"connections": []any{map[string]any{"uri": closedURL, "port": atoi(hostPort), "local": true}}},
+				// A decoy whose address is really another server: must be rejected.
+				map[string]any{"name": "Decoy", "provides": "server", "clientIdentifier": "machine-decoy",
+					"accessToken": "decoy-token", "owned": true,
+					"connections": []any{map[string]any{"uri": primary.URL, "port": 1, "local": true}}},
+				map[string]any{"name": "A phone", "provides": "client,player", "clientIdentifier": "phone"},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(plexTV.Close)
+
+	h := newHarness(t, nil)
+	h.app.auth.plexTV = plexTV.URL
+	h.app.auth.extraHosts = []string{"127.0.0.1"}
+
+	req, _ := http.NewRequest(http.MethodPost, h.server.URL+"/api/plex-auth/start", strings.NewReader("{}"))
+	req.Header.Set("X-Mediux-Settings", "1")
+	start := decode(t, mustDo(t, req))
+	session := start["session"].(string)
+	if !strings.HasPrefix(start["url"].(string), "https://app.plex.tv/auth#?") || !strings.Contains(start["url"].(string), "code=abcd") {
+		t.Fatalf("sign-in link: %v", start["url"])
+	}
+	if d := h.get(t, "/api/plex-auth/check?session="+session); d["done"] != false {
+		t.Fatalf("should still be waiting: %v", d)
+	}
+	d := h.get(t, "/api/plex-auth/check?session="+session)
+	if d["done"] != true {
+		t.Fatalf("should be signed in: %v", d)
+	}
+	raw, _ := json.Marshal(d)
+	if strings.Contains(string(raw), "-token") {
+		t.Fatalf("tokens must not reach the page: %s", raw)
+	}
+	got := map[string]string{}
+	for _, x := range d["servers"].([]any) {
+		f := x.(map[string]any)
+		u, _ := f["url"].(string)
+		got[f["name"].(string)] = u
+	}
+	if got["Unlimited-Primary"] != primary.URL {
+		t.Errorf("primary should use its local address: %v", got)
+	}
+	if got["Streamstead"] != "http://127.0.0.1:"+hostPort {
+		t.Errorf("Streamstead should be found through the extra host route: %v", got)
+	}
+	if got["Decoy"] != "" {
+		t.Errorf("an address answering as another server must be rejected: %v", got)
+	}
+	if _, ok := got["A phone"]; ok {
+		t.Errorf("non-servers must not be listed")
+	}
+
+	body, _ := json.Marshal(map[string]any{"session": session, "machines": []string{"machine-primary", "machine-streamstead"}})
+	req, _ = http.NewRequest(http.MethodPost, h.server.URL+"/api/plex-auth/add", strings.NewReader(string(body)))
+	req.Header.Set("X-Mediux-Settings", "1")
+	decode(t, mustDo(t, req))
+	tokens := map[string]string{}
+	for _, srv := range h.store.get().PlexServers {
+		tokens[srv.Name] = srv.Token
+	}
+	if len(tokens) != 2 || tokens["Unlimited-Primary"] != "primary-token" || tokens["Streamstead"] != "streamstead-token" {
+		t.Fatalf("saved servers: %+v", h.store.get().PlexServers)
+	}
+
+	// Signing in again updates the same entries instead of adding copies.
+	req, _ = http.NewRequest(http.MethodPost, h.server.URL+"/api/plex-auth/add", strings.NewReader(string(body)))
+	req.Header.Set("X-Mediux-Settings", "1")
+	decode(t, mustDo(t, req))
+	if n := len(h.store.get().PlexServers); n != 2 {
+		t.Fatalf("re-adding should update, not duplicate: %+v", h.store.get().PlexServers)
+	}
+	// A different server with a taken name gets its own entry.
+	h.app.auth.mu.Lock()
+	for _, sess := range h.app.auth.sessions {
+		sess.servers = append(sess.servers, foundServer{Machine: "machine-other", Name: "Streamstead", URL: "http://10.0.0.9:32400", token: "other-token"})
+	}
+	h.app.auth.mu.Unlock()
+	body, _ = json.Marshal(map[string]any{"session": session, "machines": []string{"machine-other"}})
+	req, _ = http.NewRequest(http.MethodPost, h.server.URL+"/api/plex-auth/add", strings.NewReader(string(body)))
+	req.Header.Set("X-Mediux-Settings", "1")
+	decode(t, mustDo(t, req))
+	names := []string{}
+	for _, srv := range h.store.get().PlexServers {
+		names = append(names, srv.Name)
+	}
+	if strings.Join(names, ",") != "Streamstead,Unlimited-Primary,Streamstead (2)" {
+		t.Fatalf("names: %v", names)
 	}
 }

@@ -459,7 +459,15 @@
       <p class="lead">When new artwork turns up, these servers are asked to refresh just that title. Use addresses this container can reach, with your Plex token for each server.</p>
       <label class="toggle"><input type="checkbox" id="refreshPlex"><div><b>Refresh titles in Plex automatically</b><span>Without this, new artwork waits for Plex's own next refresh.</span></div></label>
       <div class="servers" id="servers"></div>
-      <div class="row" style="margin-top:12px"><button type="button" id="addServer">Add server</button></div>
+      <div class="row" style="margin-top:12px">
+        <button type="button" class="primary" id="plexSignIn">Sign in with Plex</button>
+        <button type="button" class="ghost" id="addServer">Add a server by hand</button>
+      </div>
+      <p class="msg" id="signInMsg" role="status"></p>
+      <div id="signInResult" hidden>
+        <div class="servers" id="foundServers"></div>
+        <div class="row" style="margin-top:10px"><button type="button" class="primary" id="addFound">Add selected servers</button></div>
+      </div>
     </div>
 
     <div class="card">
@@ -836,6 +844,66 @@ function renderServers() {
     box.append(el("div", { class: "server" }, name, url, token, test, rm, msg));
   });
 }
+/* Sign in with Plex: Plex's own sign-in window, then pick servers. */
+let signInSession = null, signInTimer = null;
+$("plexSignIn").onclick = async () => {
+  clearTimeout(signInTimer);
+  $("signInResult").hidden = true;
+  const popup = window.open("about:blank", "plexsignin", "width=600,height=720");
+  say($("signInMsg"), "Opening Plex sign-in…");
+  let start;
+  try { start = await api("/api/plex-auth/start", { method: "POST", body: "{}" }); }
+  catch (e) { if (popup) popup.close(); say($("signInMsg"), e.message, false); return; }
+  signInSession = start.session;
+  if (popup) popup.location = start.url;
+  else {
+    $("signInMsg").textContent = "";
+    $("signInMsg").append("Your browser blocked the window. ", el("a", { href: start.url, target: "_blank", rel: "noopener", text: "Open Plex sign-in" }), ".");
+  }
+  if (popup) say($("signInMsg"), "Sign in to Plex in the window that opened. This page will continue by itself.");
+  const began = Date.now();
+  const poll = async () => {
+    if (Date.now() - began > 5 * 60 * 1000) { say($("signInMsg"), "Sign-in timed out. Try again.", false); return; }
+    let d;
+    try { d = await api("/api/plex-auth/check?session=" + encodeURIComponent(signInSession)); }
+    catch (e) { say($("signInMsg"), e.message, false); return; }
+    if (!d.done) { signInTimer = setTimeout(poll, 2000); return; }
+    if (popup && !popup.closed) popup.close();
+    showFound(d.servers);
+  };
+  signInTimer = setTimeout(poll, 2000);
+};
+
+function showFound(found) {
+  const box = $("foundServers");
+  box.innerHTML = "";
+  if (!found.length) { say($("signInMsg"), "Signed in, but this Plex account has no servers.", false); return; }
+  say($("signInMsg"), "Signed in. Pick the servers to add; tokens are kept on this server only.", true);
+  for (const f of found) {
+    const cb = el("input", { type: "checkbox", value: f.machine });
+    cb.checked = !!f.url && f.owned; cb.disabled = !f.url;
+    const info = el("div", {}, el("b", { text: f.name + (f.owned ? "" : " (shared with you)") }),
+      el("span", { text: f.url ? "Reachable at " + f.url : "" }));
+    if (f.note) info.append(el("span", { class: "hint", text: " " + f.note }));
+    box.append(el("label", { class: "toggle", style: "margin-top:6px" }, cb, info));
+  }
+  $("signInResult").hidden = false;
+}
+
+$("addFound").onclick = async () => {
+  const machines = [...$("foundServers").querySelectorAll("input:checked")].map((c) => c.value);
+  try {
+    const res = await api("/api/plex-auth/add", { method: "POST", body: JSON.stringify({ session: signInSession, machines }) });
+    const fresh = await api("/api/settings");
+    servers = (fresh.plex_servers || []).map((p) => ({ name: p.name, url: p.url, token: "", has_token: p.has_token }));
+    if (loaded) loaded.plex_servers = fresh.plex_servers;
+    renderServers();
+    $("signInResult").hidden = true;
+    say($("signInMsg"), res.status + " Use Test to check each one.", true);
+    refreshStatus();
+  } catch (e) { say($("signInMsg"), e.message, false); }
+};
+
 $("addServer").onclick = () => { servers.push({ name: "", url: "", token: "", has_token: false }); changed(); renderServers(); };
 
 /* ---------- Discord ---------- */

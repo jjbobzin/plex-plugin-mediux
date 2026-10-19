@@ -56,8 +56,9 @@ keeps using the local `http://<server-ip>:38600/...` addresses either way.
   or refreshed. The provider re-checks Mediux on a schedule for titles Plex has
   asked about. When something new appears, such as a title card uploaded after
   the episode aired, it asks your Plex servers to refresh that title and can
-  post to a Discord channel. Add Plex servers and a Discord webhook on the
-  **Watch & notify** tab.
+  post to a Discord channel. On the **Watch & notify** tab, use **Sign in
+  with Plex** to add your servers (the provider finds an address it can
+  reach and keeps the tokens to itself), and paste a Discord webhook.
 - **Try it** shows what your settings pick for any title, and **Log** lists what
   Plex asked for and what happened.
 
