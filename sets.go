@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -25,7 +26,7 @@ type setCard struct {
 	ID         string     `json:"id"`
 	Creator    string     `json:"creator"`
 	Popularity float64    `json:"popularity"`
-	Favourite  int        `json:"favourite,omitempty"` // 1-based rank in creator priority
+	Favorite   int        `json:"favorite,omitempty"` // 1-based rank in creator priority
 	Excluded   bool       `json:"excluded,omitempty"`
 	Poster     string     `json:"poster,omitempty"`
 	Background string     `json:"background,omitempty"`
@@ -33,20 +34,21 @@ type setCard struct {
 	Seasons    []setImage `json:"seasons"`
 	Cards      []setImage `json:"cards"`
 	CardCount  int        `json:"card_count"`
+	Collection string     `json:"collection,omitempty"` // name, for movie collection sets
 }
 
 const cardsPerSet = 60 // thumbnails sent to the page per set; the count is exact
 
 func thumbURL(a artwork) string { return imageURL(a, "optimized") }
 
-// setsFor describes every set for a title, favourites first.
+// setsFor describes every set for a title, favorites first.
 func setsFor(b bundle, cfg settings) []setCard {
 	priority, excluded := rankMap(cfg.PriorityCreators), rankMap(cfg.ExcludedCreators)
 	out := []setCard{}
 	for _, s := range b.Sets {
-		c := setCard{ID: s.ID, Creator: s.Creator, Popularity: s.Popularity, Seasons: []setImage{}, Cards: []setImage{}}
+		c := setCard{ID: s.ID, Creator: s.Creator, Popularity: s.Popularity, Seasons: []setImage{}, Cards: []setImage{}, Collection: s.Collection}
 		if r, ok := priority[strings.ToLower(s.Creator)]; ok {
-			c.Favourite = r + 1
+			c.Favorite = r + 1
 		}
 		_, c.Excluded = excluded[strings.ToLower(s.Creator)]
 		for _, a := range s.Art {
@@ -89,7 +91,7 @@ func setsFor(b bundle, cfg settings) []setCard {
 		out = append(out, c)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		fi, fj := out[i].Favourite, out[j].Favourite
+		fi, fj := out[i].Favorite, out[j].Favorite
 		if (fi > 0) != (fj > 0) {
 			return fi > 0
 		}
@@ -172,7 +174,8 @@ func (ui *webUI) sets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"type": kind, "tmdb": tmdb, "how": how, "title": title, "year": year,
 		"sets": setsFor(b, cfg), "auto": auto, "pick": picked,
-		"aura": ui.provider.aura.pin(kind, tmdb) != nil,
+		"aura":   ui.provider.aura.pin(kind, tmdb) != nil,
+		"others": ui.otherMatches(ctx, kind, r.URL.Query().Get("q"), tmdb),
 	})
 }
 
@@ -304,4 +307,181 @@ func mapValues[K comparable](m map[K]string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+type titleChoice struct {
+	TMDB  string `json:"tmdb"`
+	Title string `json:"title"`
+	Year  int    `json:"year,omitempty"`
+}
+
+// otherMatches lists other Mediux titles for what was typed, so "Evil Dead"
+// can lead to The Evil Dead (1981) as well as the 2013 film.
+func (ui *webUI) otherMatches(ctx context.Context, kind mediaType, typed, chosen string) []titleChoice {
+	out := []titleChoice{}
+	typed = strings.TrimSpace(typed)
+	if typed == "" || numericID(typed) {
+		return out
+	}
+	title, _ := splitYear(typed, 0)
+	var list []titleMatch
+	var err error
+	if kind == typeMovie {
+		list, err = ui.provider.mediux.searchMovies(ctx, title)
+	} else {
+		list, err = ui.provider.mediux.searchShows(ctx, title)
+	}
+	if err != nil {
+		return out
+	}
+	for _, m := range list {
+		if m.ID != chosen && len(out) < 10 {
+			out = append(out, titleChoice{m.ID, m.Title, yearOf(m.Date)})
+		}
+	}
+	return out
+}
+
+// plexNow shows what each Plex server displays for a title right now.
+func (ui *webUI) plexNow(w http.ResponseWriter, r *http.Request) {
+	kind := mediaType(r.URL.Query().Get("type"))
+	tmdb := r.URL.Query().Get("tmdb")
+	if kind != typeMovie && kind != typeShow || !numericID(tmdb) {
+		writeJSON(w, 400, map[string]string{"error": "unknown title"})
+		return
+	}
+	cfg := ui.settings.get()
+	if !hasPlexToken(cfg.PlexServers) {
+		writeJSON(w, 200, map[string]any{"configured": false, "servers": []any{}})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	cur := ui.plex.current(ctx, cfg.PlexServers, kind, tmdb)
+	if cur == nil {
+		cur = []plexCurrent{}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, map[string]any{"configured": true, "servers": cur})
+}
+
+// plexImage relays an image from a Plex server, adding its token.
+func (ui *webUI) plexImage(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	i, err := strconv.Atoi(q.Get("s"))
+	servers := ui.settings.get().PlexServers
+	if err != nil || i < 0 || i >= len(servers) || servers[i].Token == "" {
+		http.NotFound(w, r)
+		return
+	}
+	width, _ := strconv.Atoi(q.Get("w"))
+	height, _ := strconv.Atoi(q.Get("h"))
+	width, height = min(max(width, 40), 1200), min(max(height, 40), 1800)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	res, err := ui.plex.image(ctx, servers[i], q.Get("p"), width, height)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer res.Body.Close()
+	ct := res.Header.Get("Content-Type")
+	if res.StatusCode != http.StatusOK || !strings.HasPrefix(ct, "image/") {
+		http.Error(w, "Plex returned "+res.Status, http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	_, _ = io.Copy(w, io.LimitReader(res.Body, 20<<20))
+}
+
+// collection lists the movies a collection set covers.
+func (ui *webUI) collection(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if !numericID(id) {
+		writeJSON(w, 400, map[string]string{"error": "unknown collection set"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	movies, err := ui.provider.mediux.collectionMovies(ctx, id)
+	if err != nil {
+		writeJSON(w, 502, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"movies": movies})
+}
+
+// saveCollectionPick picks one collection set for every movie it covers.
+func (ui *webUI) saveCollectionPick(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		SetID      string `json:"set_id"`
+		Poster     bool   `json:"poster"`
+		Background bool   `json:"background"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&in); err != nil || !numericID(in.SetID) || !(in.Poster || in.Background) {
+		writeJSON(w, 400, map[string]string{"error": "choose a collection set and what to use it for"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	movies, err := ui.provider.mediux.collectionMovies(ctx, in.SetID)
+	if err != nil {
+		writeJSON(w, 502, map[string]string{"error": err.Error()})
+		return
+	}
+	var picked []userPick
+	for _, m := range movies {
+		p := userPick{Type: typeMovie, TMDB: m.TMDB, Title: m.Title, Year: m.Year}
+		if old := ui.provider.picks.get(typeMovie, m.TMDB); old != nil {
+			p = *old
+		}
+		changed := false
+		if in.Poster && m.Poster {
+			p.PosterSet, changed = in.SetID, true
+		}
+		if in.Background && m.Background {
+			p.BackSet, changed = in.SetID, true
+		}
+		if !changed {
+			continue
+		}
+		if err := ui.provider.picks.put(p); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		picked = append(picked, p)
+	}
+	if len(picked) == 0 {
+		writeJSON(w, 400, map[string]string{"error": "this collection set has no artwork of that kind"})
+		return
+	}
+	names := make([]string, 0, len(picked))
+	for _, p := range picked {
+		names = append(names, p.Title)
+	}
+	cfg := ui.settings.get()
+	status := fmt.Sprintf("Saved for %s: %s.", plural(len(picked), "movie", "movies"), strings.Join(names, ", "))
+	if !cfg.RefreshPlex || !hasPlexToken(cfg.PlexServers) {
+		writeJSON(w, 200, map[string]string{"status": status + " Refresh them in Plex to see the change."})
+		return
+	}
+	go func() {
+		for _, p := range picked {
+			bg, done := context.WithTimeout(context.Background(), 3*time.Minute)
+			asked, err := ui.plex.refresh(bg, cfg.PlexServers, typeMovie, p.TMDB, cfg.ReplaceLocked)
+			done()
+			detail, result := "Collection pick saved", "picked"
+			switch {
+			case err != nil:
+				detail, result = detail+"; Plex refresh problem: "+err.Error(), "error"
+			case len(asked) > 0:
+				detail += "; refreshed in Plex: " + strings.Join(unique(asked), ", ")
+			default:
+				detail += "; not in your Plex libraries yet (it will be used when it's added)"
+			}
+			ui.activity.add("movie", p.Title, result, detail)
+		}
+	}()
+	writeJSON(w, 200, map[string]string{"status": status + " Refreshing them in Plex now; the Log shows each one."})
 }

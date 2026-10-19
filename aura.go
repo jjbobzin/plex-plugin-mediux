@@ -19,14 +19,15 @@ import (
 
 // auraPin holds the asset IDs AURA saved for one movie or show.
 type auraPin struct {
-	Type     string            `json:"type"` // movie or show
-	TMDB     string            `json:"tmdb"`
-	Title    string            `json:"title"`
-	Year     int               `json:"year"`
-	Poster   string            `json:"-"`
-	Backdrop string            `json:"-"`
-	Seasons  map[int]string    `json:"-"`
-	Cards    map[[2]int]string `json:"-"`
+	Type      string            `json:"type"` // movie or show
+	TMDB      string            `json:"tmdb"`
+	Title     string            `json:"title"`
+	Year      int               `json:"year"`
+	Libraries []string          `json:"libraries"` // AURA library titles, e.g. "Movies", "TV Anime"
+	Poster    string            `json:"-"`
+	Backdrop  string            `json:"-"`
+	Seasons   map[int]string    `json:"-"`
+	Cards     map[[2]int]string `json:"-"`
 }
 
 type auraStatus struct {
@@ -146,7 +147,7 @@ func (p auraPin) parts() string {
 }
 
 // readAuraDB reads AURA's saved selections. Later saves win where two saved
-// sets cover the same image, matching AURA's own behaviour.
+// sets cover the same image, matching AURA's own behavior.
 func readAuraDB(path string) (map[string]*auraPin, error) {
 	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(3000)")
 	if err != nil {
@@ -156,7 +157,7 @@ func readAuraDB(path string) (map[string]*auraPin, error) {
 	db.SetMaxOpenConns(1)
 
 	rows, err := db.Query(`
-		SELECT si.tmdb_id, si.poster_set_id,
+		SELECT si.tmdb_id, si.poster_set_id, COALESCE(si.library_title, ''),
 		       COALESCE(si.poster_selected, 0), COALESCE(si.backdrop_selected, 0),
 		       COALESCE(si.season_poster_selected, 0), COALESCE(si.special_season_poster_selected, 0),
 		       COALESCE(si.titlecard_selected, 0),
@@ -168,7 +169,7 @@ func readAuraDB(path string) (map[string]*auraPin, error) {
 		return nil, fmt.Errorf("reading AURA saved items: %w", err)
 	}
 	type saved struct {
-		tmdb, set                                  string
+		tmdb, set, library                         string
 		poster, backdrop, seasons, specials, cards bool
 		typ, title                                 string
 		year                                       int
@@ -177,7 +178,7 @@ func readAuraDB(path string) (map[string]*auraPin, error) {
 	for rows.Next() {
 		var s saved
 		var tmdb, set any
-		if err := rows.Scan(&tmdb, &set, &s.poster, &s.backdrop, &s.seasons, &s.specials, &s.cards, &s.typ, &s.title, &s.year); err != nil {
+		if err := rows.Scan(&tmdb, &set, &s.library, &s.poster, &s.backdrop, &s.seasons, &s.specials, &s.cards, &s.typ, &s.title, &s.year); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("reading AURA saved items: %w", err)
 		}
@@ -201,6 +202,9 @@ func readAuraDB(path string) (map[string]*auraPin, error) {
 			p = &auraPin{Type: typ, TMDB: s.tmdb, Title: s.title, Year: s.year,
 				Seasons: map[int]string{}, Cards: map[[2]int]string{}}
 			pins[key] = p
+		}
+		if s.library != "" && !containsString(p.Libraries, s.library) {
+			p.Libraries = append(p.Libraries, s.library)
 		}
 		images, err := db.Query(`
 			SELECT image_id, COALESCE(image_type, ''), image_season_number, image_episode_number
@@ -268,4 +272,13 @@ func plural(n int, one, many string) string {
 		return "1 " + one
 	}
 	return fmt.Sprintf("%d %s", n, many)
+}
+
+func containsString(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +51,7 @@ type set struct {
 	ID, Creator string
 	Popularity  float64
 	Art         []artwork
+	Collection  string // collection name, for collection sets
 }
 
 type bundle struct{ Sets []set }
@@ -165,7 +167,7 @@ func (c *mediuxClient) queryWithToken(ctx context.Context, token, operation, q s
 }
 
 const showQuery = `query($tmdb_id: ID!){shows_by_id(id:$tmdb_id){id show_sets(limit:-1){ id popularity user_created{username} show_poster(limit:-1){id modified_on language{display_name}} show_backdrop(limit:-1){id modified_on language{display_name}} season_posters(limit:-1){ id modified_on language{display_name} season{season_number}} titlecards(limit:-1){id modified_on language{display_name} episode{episode_number season_id{season_number}}} files(limit:-1){ id file_type modified_on language{display_name} }}}}`
-const movieQuery = `query($tmdb_id: ID!){movies_by_id(id:$tmdb_id){id movie_sets(limit:-1){id popularity user_created{username} movie_poster(limit:-1){id modified_on language{display_name}} movie_backdrop(limit:-1){id modified_on language{display_name}} files(limit:-1){id file_type modified_on language{display_name}}} posters(limit:-1,filter:{collection_set:{id:{_nnull:true}}}){id modified_on language{display_name} movie{id} collection_set{id popularity user_created{username}}} backdrops(limit:-1,filter:{collection_set:{id:{_nnull:true}}}){id modified_on language{display_name} movie{id} collection_set{id popularity user_created{username}}}}}`
+const movieQuery = `query($tmdb_id: ID!){movies_by_id(id:$tmdb_id){id movie_sets(limit:-1){id popularity user_created{username} movie_poster(limit:-1){id modified_on language{display_name}} movie_backdrop(limit:-1){id modified_on language{display_name}} files(limit:-1){id file_type modified_on language{display_name}}} posters(limit:-1,filter:{collection_set:{id:{_nnull:true}}}){id modified_on language{display_name} movie{id} collection_set{id popularity user_created{username} set_title collection_id{collection_name}}} backdrops(limit:-1,filter:{collection_set:{id:{_nnull:true}}}){id modified_on language{display_name} movie{id} collection_set{id popularity user_created{username} set_title collection_id{collection_name}}}}}`
 
 // artwork returns every Mediux set for a movie or show, cached per settings generation.
 func (c *mediuxClient) artwork(ctx context.Context, typ mediaType, tmdbID string) (bundle, error) {
@@ -379,6 +381,10 @@ func movieCollectionSets(item map[string]json.RawMessage, movieID string) ([]set
 				User       struct {
 					Username string `json:"username"`
 				} `json:"user_created"`
+				Title      string `json:"set_title"`
+				Collection *struct {
+					Name string `json:"collection_name"`
+				} `json:"collection_id"`
 			} `json:"collection_set"`
 		}
 		if err := json.Unmarshal(item[scope.field], &assets); err != nil {
@@ -392,7 +398,14 @@ func movieCollectionSets(item map[string]json.RawMessage, movieID string) ([]set
 			if !found {
 				i = len(sets)
 				indices[a.Set.ID] = i
-				sets = append(sets, set{ID: a.Set.ID, Creator: a.Set.User.Username, Popularity: a.Set.Popularity})
+				name := a.Set.Title
+				if a.Set.Collection != nil && a.Set.Collection.Name != "" {
+					name = a.Set.Collection.Name
+				}
+				if name == "" {
+					name = "Collection"
+				}
+				sets = append(sets, set{ID: a.Set.ID, Creator: a.Set.User.Username, Popularity: a.Set.Popularity, Collection: name})
 			}
 			modified, _ := time.Parse(time.RFC3339Nano, a.Modified)
 			sets[i].Art = append(sets[i].Art, artwork{ID: a.ID, Creator: a.Set.User.Username, Kind: scope.kind,
@@ -453,21 +466,29 @@ func (c *mediuxClient) searchShows(ctx context.Context, title string) ([]titleMa
 	return c.searchTitles(ctx, "shows", "first_air_date", title)
 }
 
-// searchTitles asks for exact title matches (Mediux compares them without
-// regard to case) and, as a backup, titles containing the text. Exact matches
-// come first: a "contains" search alone misses titles like "1917", whose
-// first 25 hits are other films with 1917 in the name.
+// searchTitles looks a title up four ways in one request, best first:
+// exact (Mediux ignores case), exact with or without a leading "The",
+// starting with the text, then containing it. A "contains" search alone
+// misses titles like "1917", whose first 25 hits are other films with 1917 in
+// the name, and "The Evil Dead" for "Evil Dead".
 func (c *mediuxClient) searchTitles(ctx context.Context, collection, dateField, title string) ([]titleMatch, error) {
+	alt := "The " + title
+	if strings.HasPrefix(strings.ToLower(title), "the ") {
+		alt = strings.TrimSpace(title[4:])
+	}
 	fields := "{id title " + dateField + "}"
-	q := "query($q:String!){exact:" + collection + "(limit:50,filter:{title:{_eq:$q}})" + fields +
+	q := "query($q:String!,$alt:String!){" +
+		"exact:" + collection + "(limit:50,filter:{title:{_eq:$q}})" + fields +
+		" alt:" + collection + "(limit:50,filter:{title:{_eq:$alt}})" + fields +
+		" starts:" + collection + "(limit:25,filter:{title:{_istarts_with:$q}})" + fields +
 		" near:" + collection + "(limit:25,filter:{title:{_icontains:$q}})" + fields + "}"
 	var out map[string][]map[string]any
-	if err := c.query(ctx, collection+" title search", q, map[string]any{"q": title}, &out); err != nil {
+	if err := c.query(ctx, collection+" title search", q, map[string]any{"q": title, "alt": alt}, &out); err != nil {
 		return nil, err
 	}
 	var res []titleMatch
 	seen := map[string]bool{}
-	for _, group := range []string{"exact", "near"} {
+	for _, group := range []string{"exact", "alt", "starts", "near"} {
 		for _, m := range out[group] {
 			id, _ := m["id"].(string)
 			if id == "" || seen[id] {
@@ -688,4 +709,93 @@ func (c *mediuxClient) titleOf(ctx context.Context, typ mediaType, tmdbID string
 	}
 	t := out[field]
 	return t.Title, yearOf(t.Movie + t.Show)
+}
+
+// collectionMovie is one movie a collection set has artwork for.
+type collectionMovie struct {
+	TMDB       string `json:"tmdb"`
+	Title      string `json:"title"`
+	Year       int    `json:"year,omitempty"`
+	Poster     bool   `json:"poster"`
+	Background bool   `json:"background"`
+}
+
+var (
+	collectionMu    sync.Mutex
+	collectionCache = map[string]struct {
+		movies []collectionMovie
+		until  time.Time
+	}{}
+)
+
+// collectionMovies lists the movies a collection set covers, from the movies
+// its posters and backgrounds belong to (Mediux's own collection movie lists
+// are often empty).
+func (c *mediuxClient) collectionMovies(ctx context.Context, setID string) ([]collectionMovie, error) {
+	collectionMu.Lock()
+	if e, ok := collectionCache[setID]; ok && time.Now().Before(e.until) {
+		collectionMu.Unlock()
+		return e.movies, nil
+	}
+	collectionMu.Unlock()
+	type file struct {
+		Movie *struct {
+			ID      string `json:"id"`
+			Title   string `json:"title"`
+			Release string `json:"release_date"`
+		} `json:"movie"`
+	}
+	var out struct {
+		Set *struct {
+			Posters   []file `json:"movie_posters"`
+			Backdrops []file `json:"movie_backdrops"`
+		} `json:"collection_sets_by_id"`
+	}
+	q := `query($id: ID!){collection_sets_by_id(id:$id){movie_posters(limit:-1){movie{id title release_date}} movie_backdrops(limit:-1){movie{id title release_date}}}}`
+	if err := c.query(ctx, "collection set", q, map[string]any{"id": setID}, &out); err != nil {
+		return nil, err
+	}
+	byID := map[string]*collectionMovie{}
+	var order []string
+	add := func(f file, poster bool) {
+		if f.Movie == nil || f.Movie.ID == "" {
+			return
+		}
+		m := byID[f.Movie.ID]
+		if m == nil {
+			m = &collectionMovie{TMDB: f.Movie.ID, Title: f.Movie.Title, Year: yearOf(f.Movie.Release)}
+			byID[f.Movie.ID] = m
+			order = append(order, f.Movie.ID)
+		}
+		if poster {
+			m.Poster = true
+		} else {
+			m.Background = true
+		}
+	}
+	if out.Set != nil {
+		for _, f := range out.Set.Posters {
+			add(f, true)
+		}
+		for _, f := range out.Set.Backdrops {
+			add(f, false)
+		}
+	}
+	movies := make([]collectionMovie, 0, len(order))
+	for _, id := range order {
+		movies = append(movies, *byID[id])
+	}
+	sort.SliceStable(movies, func(i, j int) bool {
+		if movies[i].Year != movies[j].Year {
+			return movies[i].Year < movies[j].Year
+		}
+		return movies[i].Title < movies[j].Title
+	})
+	collectionMu.Lock()
+	collectionCache[setID] = struct {
+		movies []collectionMovie
+		until  time.Time
+	}{movies, time.Now().Add(6 * time.Hour)}
+	collectionMu.Unlock()
+	return movies, nil
 }

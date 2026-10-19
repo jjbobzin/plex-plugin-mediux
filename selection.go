@@ -107,7 +107,7 @@ func bestForLanguage(list []artwork, kind, requested string) (artwork, bool) {
 			tiers = append(tiers, func(l string) bool { return l == "en" })
 		}
 		tiers = append(tiers, func(l string) bool { return l == "" }, func(l string) bool { return l != "" })
-	default: // backgrounds favour artwork without text
+	default: // backgrounds favor artwork without text
 		tiers = append(tiers, func(l string) bool { return l == "" }, func(l string) bool { return l != "" })
 	}
 	for _, match := range tiers {

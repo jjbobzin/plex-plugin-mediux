@@ -4,7 +4,7 @@
 Two providers run from this one server:
 
 - Movies at  /     : solid pink (or POSTER_COLOR) poster and teal background.
-- TV shows at /tv  : labelled images so mix-ups are easy to spot: the show
+- TV shows at /tv  : labeled images so mix-ups are easy to spot: the show
   poster reads "SHOW", season posters read "S1", "S2"..., and episode title
   cards read "S1E3". Show structure (seasons/episodes) comes from TVmaze.
 
@@ -58,7 +58,7 @@ GLYPHS = {
 
 
 def make_png(width, height, rgb, text=""):
-    """Build a PNG of one colour, optionally with white block-letter text, without any image library."""
+    """Build a PNG of one color, optionally with white block-letter text, without any image library."""
     bg = bytes(rgb) * width
     rows = [bg] * height
     text = "".join(c for c in text.upper() if c in GLYPHS)
@@ -91,14 +91,14 @@ def make_png(width, height, rgb, text=""):
 ART_ONLY = os.environ.get("ART_ONLY") == "1"
 POSTER_HEX = os.environ.get("POSTER_COLOR", "ff00aa").lower()
 POSTER_RGB = bytes.fromhex(POSTER_HEX)
-# The colour is part of the file name: Plex will not re-download an image whose URL it already has.
+# The color is part of the file name: Plex will not re-download an image whose URL it already has.
 POSTER_NAME = "poster.png" if POSTER_HEX == "ff00aa" else f"poster-{POSTER_HEX}.png"
 
 IMAGES = {
     POSTER_NAME: make_png(1000, 1500, POSTER_RGB),            # pink unless overridden
     "background.png": make_png(1920, 1080, (0, 170, 170)),  # teal
 }
-GENERATED = {}  # cache for labelled images: /img/<w>x<h>/<hex>/<label>.png
+GENERATED = {}  # cache for labeled images: /img/<w>x<h>/<hex>/<label>.png
 
 PALETTE = ["e6194b", "3cb44b", "4363d8", "f58231", "911eb4", "42d4f4",
            "f032e6", "9a6324", "800000", "008080", "000075", "808000"]
@@ -119,8 +119,8 @@ def lan_ip():
 BASE_URL = (os.environ.get("PUBLIC_URL") or f"http://{lan_ip()}:{PORT}").rstrip("/")
 
 
-def labelled_url(width, height, hex_colour, label):
-    return f"{BASE_URL}/img/{width}x{height}/{hex_colour}/{label}.png"
+def labeled_url(width, height, hex_color, label):
+    return f"{BASE_URL}/img/{width}x{height}/{hex_color}/{label}.png"
 
 
 # --- shared helpers -----------------------------------------------------
@@ -269,8 +269,8 @@ def tv_item(show_key, season=None, episode=None):
         item = {
             "ratingKey": show_key, "key": f"/library/metadata/{show_key}", "guid": show_guid,
             "type": "show", "title": title or show_key,
-            "thumb": labelled_url(1000, 1500, "ff8800", "SHOW"),
-            "art": labelled_url(1920, 1080, "008080", "SHOW"),
+            "thumb": labeled_url(1000, 1500, "ff8800", "SHOW"),
+            "art": labeled_url(1920, 1080, "008080", "SHOW"),
         }
         item["Image"] = [{"type": "coverPoster", "url": item["thumb"]},
                          {"type": "background", "url": item["art"]}]
@@ -283,7 +283,7 @@ def tv_item(show_key, season=None, episode=None):
                 "type": "season", "title": f"Season {season}", "index": season,
                 "parentRatingKey": show_key, "parentKey": f"/library/metadata/{show_key}",
                 "parentGuid": show_guid, "parentType": "show", "parentTitle": title or show_key,
-                "thumb": labelled_url(1000, 1500, PALETTE[season % len(PALETTE)], f"S{season}"),
+                "thumb": labeled_url(1000, 1500, PALETTE[season % len(PALETTE)], f"S{season}"),
             }
             item["Image"] = [{"type": "coverPoster", "url": item["thumb"]}]
         else:
@@ -297,7 +297,7 @@ def tv_item(show_key, season=None, episode=None):
                 "grandparentRatingKey": show_key, "grandparentKey": f"/library/metadata/{show_key}",
                 "grandparentGuid": show_guid, "grandparentType": "show",
                 "grandparentTitle": title or show_key,
-                "thumb": labelled_url(1920, 1080, PALETTE[(season + episode) % len(PALETTE)],
+                "thumb": labeled_url(1920, 1080, PALETTE[(season + episode) % len(PALETTE)],
                                       f"S{season}E{episode}"),
             }
             item["Image"] = [{"type": "snapshot", "url": item["thumb"]}]

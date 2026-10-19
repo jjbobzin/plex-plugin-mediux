@@ -159,6 +159,33 @@
   .pickbar .summary { flex: 1; min-width: 200px; color: var(--muted); font-size: 14px; }
   .pickbar .summary b { color: var(--text); }
 
+  .others { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; font-size: 13.5px; color: var(--muted); }
+  .others button { padding: 4px 11px; border-radius: 999px; font-size: 13px; }
+  .plexnow { margin-top: 14px; padding: 14px; border: 1px dashed var(--line); border-radius: 12px; background: var(--surface); }
+  .plexnow h3 { margin: 0 0 4px; font-size: 15px; }
+  .plexnow .srv { margin-top: 12px; }
+  .plexnow .srv .head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .plexnow .srv .main { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+  .plexnow img { border-radius: 8px; border: 1px solid var(--line); background: #08080b; display: block; }
+  .plexnow img.p { width: 110px; } .plexnow img.b { width: 230px; }
+  .badge.warn { background: rgba(245,181,68,.13); color: var(--warn); }
+  .collection { margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+  .collection ul { margin: 6px 0 10px; padding-left: 18px; color: var(--muted); font-size: 13.5px; }
+
+  .pills { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 4px; }
+  .pills button { border-radius: 999px; padding: 6px 14px; }
+  .pills button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+  .pills .count { color: var(--muted); margin-left: 6px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .listhead { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+  .listtools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .listtools input[type=text] { width: 220px; }
+  .listtools label { display: flex; align-items: center; gap: 8px; margin: 0; font-weight: 500; color: var(--muted); font-size: 13.5px; }
+  .listtools select { width: auto; padding: 7px 10px; }
+  .pager { display: flex; gap: 6px; align-items: center; justify-content: flex-end; flex-wrap: wrap; margin-top: 10px; color: var(--muted); font-size: 13.5px; }
+  .pager .range { margin-right: auto; }
+  .pager button { padding: 5px 11px; min-width: 36px; }
+  .pager input[type=number] { width: 68px; text-align: center; padding: 5px 6px; }
+
   .savebar { position: fixed; left: 0; right: 0; bottom: 0; background: rgba(13,14,18,.94); border-top: 1px solid var(--line);
     backdrop-filter: blur(8px); transform: translateY(100%); transition: transform .18s ease; }
   .savebar.show { transform: none; }
@@ -262,7 +289,9 @@
         <button type="button" class="primary" id="setsBtn">Find sets</button>
       </div>
       <p class="msg" id="setsMsg" role="status"></p>
+      <div class="others" id="setsOthers" hidden></div>
       <div id="setsResult" hidden>
+        <div class="plexnow" id="plexNow"></div>
         <div class="pickbar">
           <div class="summary" id="pickSummary"></div>
           <button type="button" class="ghost" id="pickReset">Undo changes</button>
@@ -281,23 +310,29 @@
     </div>
 
     <div class="card">
-      <div class="row" style="justify-content:space-between">
+      <div class="listhead">
         <div><h2>Your picks</h2><p class="lead" style="margin:0">Titles you've picked sets for on this page.</p></div>
-        <input type="text" id="picksFilter" placeholder="Filter titles" style="max-width:240px">
+        <div class="listtools">
+          <input type="text" id="picksFilter" placeholder="Filter titles">
+          <label>Show <select data-size="picks" aria-label="Rows per page"></select></label>
+        </div>
       </div>
+      <div class="pills" id="pickPills"></div>
+      <div class="pager" data-pager="picks"></div>
       <div class="tablewrap">
         <table>
-          <thead><tr><th>Title</th><th>Type</th><th>Picked</th><th></th></tr></thead>
+          <thead><tr><th>Title</th><th>Picked</th><th></th></tr></thead>
           <tbody id="pickRows"></tbody>
         </table>
       </div>
+      <div class="pager" data-pager="picks"></div>
     </div>
   </section>
 
   <!-- Creators -->
   <section class="tab" id="tab-creators" role="tabpanel">
     <div class="card">
-      <h2>Favourite creators</h2>
+      <h2>Favorite creators</h2>
       <p class="lead">When several creators have artwork for a title, the one highest on this list wins. Creators you don't list still count, after these.</p>
       <label for="creatorInput">Add a creator</label>
       <div class="row search">
@@ -373,16 +408,22 @@
       <div class="status-row" style="margin-top:14px"><span class="dot" id="auraDot"></span><div><b id="auraState">Not checked yet</b><span id="auraDetail"></span></div></div>
     </div>
     <div class="card">
-      <div class="row" style="justify-content:space-between">
-        <div><h2>Saved picks</h2><p class="lead" style="margin:0">What AURA has pinned. Reloads by itself when AURA saves.</p></div>
-        <input type="text" id="auraFilter" placeholder="Filter titles" style="max-width:240px">
+      <div class="listhead">
+        <div><h2>Saved picks</h2><p class="lead" style="margin:0">What AURA has pinned, by library. Reloads by itself when AURA saves.</p></div>
+        <div class="listtools">
+          <input type="text" id="auraFilter" placeholder="Filter titles">
+          <label>Show <select data-size="aura" aria-label="Rows per page"></select></label>
+        </div>
       </div>
+      <div class="pills" id="auraPills"></div>
+      <div class="pager" data-pager="aura"></div>
       <div class="tablewrap">
         <table>
-          <thead><tr><th>Title</th><th>Type</th><th>Pinned</th></tr></thead>
+          <thead><tr><th>Title</th><th>Pinned</th></tr></thead>
           <tbody id="auraRows"></tbody>
         </table>
       </div>
+      <div class="pager" data-pager="aura"></div>
     </div>
   </section>
 
@@ -432,7 +473,7 @@
       </div>
       <p class="msg" id="discordMsg" role="status"></p>
       <label class="toggle"><input type="checkbox" id="notifyUpdates"><div><b>New artwork for titles you have</b><span>For example new title cards for a running show, or a creator updating a set.</span></div></label>
-      <label class="toggle"><input type="checkbox" id="notifyNew"><div><b>Newly added titles that got Mediux art</b><span>Can be busy while a whole library is scanned. Large bursts are summarised.</span></div></label>
+      <label class="toggle"><input type="checkbox" id="notifyNew"><div><b>Newly added titles that got Mediux art</b><span>Can be busy while a whole library is scanned. Large bursts are summarized.</span></div></label>
     </div>
   </section>
 
@@ -457,10 +498,10 @@
   <!-- Log -->
   <section class="tab" id="tab-log" role="tabpanel">
     <div class="card">
-      <div class="row" style="justify-content:space-between">
+      <div class="listhead">
         <div><h2>Log</h2><p class="lead" style="margin:0">What Plex asked for and what happened. Keeps the last 200 entries until the container restarts.</p></div>
-        <div class="row">
-          <select id="logFilter" style="width:auto">
+        <div class="listtools">
+          <select id="logFilter" aria-label="Show results">
             <option value="">Everything</option>
             <option value="matched">Matched</option>
             <option value="picked">Picks</option>
@@ -469,15 +510,18 @@
             <option value="not found">Not identified</option>
             <option value="error">Errors</option>
           </select>
+          <label>Show <select data-size="log" aria-label="Rows per page"></select></label>
           <button type="button" id="refreshLog">Refresh</button>
         </div>
       </div>
+      <div class="pager" data-pager="log"></div>
       <div class="tablewrap">
         <table>
           <thead><tr><th>Time</th><th>Title</th><th>Result</th><th>Details</th></tr></thead>
           <tbody id="logRows"></tbody>
         </table>
       </div>
+      <div class="pager" data-pager="log"></div>
     </div>
   </section>
 </main>
@@ -525,6 +569,61 @@ function ago(iso) {
   return Math.round(s / 86400) + " days ago";
 }
 
+/* ---------- paged lists ---------- */
+const PAGE_SIZES = [25, 50, 75, 100, 150, 200, 250, 0]; // 0 = all
+function remember(key, value) { try { localStorage.setItem(key, value); } catch (_) {} }
+function recall(key) { try { return localStorage.getItem(key); } catch (_) { return null; } }
+
+// makePager draws one page of rows into tbody, with « ‹ [page] of N › »
+// controls in every [data-pager=name] box and a rows-per-page picker.
+function makePager(name, tbody, colspan, row, emptyText) {
+  const st = { page: 1, items: [], size: 25 };
+  const saved = parseInt(recall("pageSize:" + name), 10);
+  if (PAGE_SIZES.includes(saved)) st.size = saved;
+  const sel = document.querySelector(`[data-size="${name}"]`);
+  for (const n of PAGE_SIZES) sel.add(new Option(n ? String(n) : "All", String(n)));
+  sel.value = String(st.size);
+  sel.onchange = () => { st.size = parseInt(sel.value, 10); st.page = 1; remember("pageSize:" + name, sel.value); draw(); };
+  const pageCount = () => (st.size ? Math.max(1, Math.ceil(st.items.length / st.size)) : 1);
+  function draw() {
+    const n = pageCount();
+    st.page = Math.min(Math.max(1, st.page), n);
+    const start = st.size ? (st.page - 1) * st.size : 0;
+    const shown = st.size ? st.items.slice(start, start + st.size) : st.items;
+    tbody.innerHTML = "";
+    if (!shown.length) tbody.append(el("tr", {}, el("td", { colspan: String(colspan), class: "hint", text: emptyText() })));
+    for (const it of shown) tbody.append(row(it));
+    for (const box of document.querySelectorAll(`[data-pager="${name}"]`)) {
+      box.innerHTML = "";
+      box.hidden = st.items.length === 0;
+      const go = (p) => { st.page = p; draw(); };
+      const btn = (label, aria, p, off) => { const b = el("button", { type: "button", text: label, "aria-label": aria, onclick: () => go(p) }); b.disabled = off; return b; };
+      const input = el("input", { type: "number", min: "1", max: String(n), value: String(st.page), "aria-label": "Page number" });
+      input.onchange = () => { const v = parseInt(input.value, 10); if (v >= 1 && v <= n) go(v); else input.value = String(st.page); };
+      box.append(el("span", { class: "range", text: "Showing " + (start + 1) + "–" + (start + shown.length) + " of " + st.items.length }),
+        btn("«", "First page", 1, st.page === 1), btn("‹", "Previous page", st.page - 1, st.page === 1),
+        input, el("span", { text: "of " + n }),
+        btn("›", "Next page", st.page + 1, st.page === n), btn("»", "Last page", n, st.page === n));
+    }
+  }
+  return { set(items, keepPage) { st.items = items; if (!keepPage) st.page = 1; draw(); } };
+}
+
+// renderPills shows one pill per group with its count; returns the chosen one.
+function renderPills(box, groups, storeKey, onPick) {
+  box.innerHTML = "";
+  const names = Object.keys(groups);
+  let current = recall(storeKey);
+  if (!names.includes(current)) current = names[0];
+  for (const name of names) {
+    const b = el("button", { type: "button", "aria-pressed": String(name === current),
+      onclick: () => { remember(storeKey, name); onPick(); } }, name, el("span", { class: "count", text: String(groups[name]) }));
+    box.append(b);
+  }
+  box.hidden = names.length === 0;
+  return current;
+}
+
 /* ---------- tabs ---------- */
 const tabs = [...document.querySelectorAll("nav.tabs button")];
 function showTab(name) {
@@ -540,7 +639,7 @@ for (const b of tabs) b.onclick = () => showTab(b.dataset.tab);
 
 /* ---------- settings ---------- */
 const modeChoices = [
-  ["CreatorPriority", "Favourite creator first", "Use the top-ranked creator who has any, taking their most complete set."],
+  ["CreatorPriority", "Favorite creator first", "Use the top-ranked creator who has any, taking their most complete set."],
   ["MostComplete", "Complete set first", "Prefer a set covering every season or episode, even from a lower-ranked creator."],
   ["SeriesPoster", "Match the show poster", "Use the set the show poster came from."],
   ["Independent", "Best image each time", "Pick each image on its own, mixing sets if needed."],
@@ -650,7 +749,7 @@ window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault()
 function renderCreators() {
   const list = $("creatorList");
   list.innerHTML = "";
-  if (!creators.length) { list.append(el("li", { class: "empty", text: "No favourites yet. Search above to add some." })); return; }
+  if (!creators.length) { list.append(el("li", { class: "empty", text: "No favorites yet. Search above to add some." })); return; }
   creators.forEach((name, i) => {
     const move = (d) => { [creators[i + d], creators[i]] = [creators[i], creators[i + d]]; changed(); renderCreators(); };
     const up = el("button", { type: "button", "aria-label": "Move " + name + " up", text: "↑", onclick: () => move(-1) });
@@ -828,22 +927,22 @@ $("checkNow").onclick = async () => {
 let auraItems = [];
 async function loadAura() {
   try { auraItems = (await api("/api/aura")).items; } catch (_) { auraItems = []; }
-  renderAura();
+  renderAura(true);
 }
-function renderAura() {
-  const body = $("auraRows"), f = $("auraFilter").value.trim().toLowerCase();
-  body.innerHTML = "";
-  const rows = auraItems.filter((p) => !f || p.title.toLowerCase().includes(f));
-  if (!rows.length) {
-    body.append(el("tr", {}, el("td", { colspan: "3", class: "hint", text: auraItems.length ? "No titles match." : "No AURA picks loaded." })));
-    return;
-  }
-  for (const p of rows) {
-    body.append(el("tr", {}, el("td", { text: p.title + (p.year ? " (" + p.year + ")" : "") }),
-      el("td", { text: p.type === "movie" ? "Movie" : "Show" }), el("td", { text: p.parts })));
-  }
+const auraPager = makePager("aura", $("auraRows"), 2,
+  (p) => el("tr", {}, el("td", { text: p.title + (p.year ? " (" + p.year + ")" : "") }), el("td", { text: p.parts })),
+  () => (auraItems.length ? "No titles match." : "No AURA picks loaded."));
+// Libraries come from AURA itself, so a third library like TV Anime gets its own pill.
+const libsOf = (p) => (p.libraries && p.libraries.length ? p.libraries : [p.type === "movie" ? "Movies" : "TV Shows"]);
+function renderAura(keepPage) {
+  const counts = {};
+  for (const p of auraItems) for (const lib of libsOf(p)) counts[lib] = (counts[lib] || 0) + 1;
+  const ordered = Object.fromEntries(Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0])));
+  const lib = renderPills($("auraPills"), ordered, "auraLibrary", () => renderAura(false));
+  const f = $("auraFilter").value.trim().toLowerCase();
+  auraPager.set(auraItems.filter((p) => libsOf(p).includes(lib) && (!f || p.title.toLowerCase().includes(f))), keepPage);
 }
-$("auraFilter").addEventListener("input", renderAura);
+$("auraFilter").addEventListener("input", () => renderAura(false));
 
 /* ---------- Sets ---------- */
 const PARTS = [
@@ -853,8 +952,54 @@ const PARTS = [
 let setsData = null, staged = null;
 const emptyPick = () => ({ poster_set: "", background_set: "", season_set: "", titlecard_set: "" });
 
+function renderOthers(type) {
+  const box = $("setsOthers");
+  box.innerHTML = "";
+  const others = setsData.others || [];
+  box.hidden = !others.length;
+  if (!others.length) return;
+  box.append("Not this one? ");
+  for (const o of others) {
+    box.append(el("button", { type: "button", text: o.title + (o.year ? " (" + o.year + ")" : ""),
+      onclick: () => { $("setsQ").value = o.tmdb; findSets(type, o.tmdb); } }));
+  }
+}
+
+// loadPlexNow shows what each Plex server displays for this title right now.
+async function loadPlexNow() {
+  const box = $("plexNow"), want = setsData.tmdb;
+  box.innerHTML = "";
+  box.append(el("h3", { text: "In Plex now" }), el("p", { class: "hint", text: "Checking your Plex servers…" }));
+  let d;
+  try { d = await api("/api/plex-current?type=" + setsData.type + "&tmdb=" + want); }
+  catch (e) { box.lastChild.textContent = e.message; return; }
+  if (!setsData || setsData.tmdb !== want) return;
+  box.innerHTML = "";
+  box.append(el("h3", { text: "In Plex now" }));
+  if (!d.configured) { box.append(el("p", { class: "hint", text: "Add your Plex servers on the Watch & notify tab to see what Plex shows for this title." })); return; }
+  if (!d.servers.length) { box.append(el("p", { class: "hint", text: "This title isn't in your Plex libraries." })); return; }
+  for (const srv of d.servers) {
+    const head = el("div", { class: "head" }, el("b", { text: srv.server }));
+    if (srv.error) { box.append(el("div", { class: "srv" }, head, el("p", { class: "msg err", text: srv.error }))); continue; }
+    if (srv.locked) head.append(el("span", { class: "badge warn", text: "Poster locked" }));
+    if (srv.overlay) head.append(el("span", { class: "badge", text: "Kometa overlay" }));
+    if (srv.locked && !$("replaceLocked").checked) head.append(el("span", { class: "hint", text: "A pick won't show here unless “Replace artwork that's locked” is on." }));
+    const main = el("div", { class: "main" });
+    if (srv.poster) main.append(el("img", { class: "p", src: srv.poster, alt: "Current poster", loading: "lazy" }));
+    if (srv.background) main.append(el("img", { class: "b", src: srv.background, alt: "Current background", loading: "lazy" }));
+    const row = el("div", { class: "srv" }, head, main);
+    if (srv.seasons && srv.seasons.length) {
+      const strip = el("div", { class: "strip seasons" });
+      for (const x of srv.seasons) strip.append(el("figure", {}, el("img", { src: x.url, alt: "Season " + x.season, loading: "lazy" }), el("figcaption", { text: x.season === 0 ? "Specials" : "S" + x.season })));
+      row.append(strip);
+    }
+    box.append(row);
+  }
+}
+
 async function findSets(type, q) {
   $("setsResult").hidden = true;
+  $("setsOthers").hidden = true;
   say($("setsMsg"), "Looking up…");
   say($("pickMsg"), "");
   try {
@@ -862,11 +1007,13 @@ async function findSets(type, q) {
     setsData.sets = setsData.sets || [];
     staged = Object.assign(emptyPick(), setsData.pick || {});
     const name = (setsData.title || q) + (setsData.year ? " (" + setsData.year + ")" : "");
+    renderOthers(type);
     if (!setsData.sets.length) { say($("setsMsg"), name + ": Mediux has no sets for this title yet."); return; }
     say($("setsMsg"), name + ": " + plural(setsData.sets.length, "set", "sets") + " on Mediux." +
       (setsData.aura ? " AURA also has a pick for this title; a pick here wins." : ""), true);
     renderSets();
     $("setsResult").hidden = false;
+    loadPlexNow();
   } catch (e) { say($("setsMsg"), e.message, false); }
 }
 $("setsBtn").onclick = () => findSets($("setsType").value, $("setsQ").value.trim());
@@ -891,11 +1038,12 @@ function renderSets() {
   renderSummary();
   for (const set of setsData.sets) {
     const head = el("div", { class: "head" }, el("span", { class: "who", text: set.creator || "Unknown creator" }));
-    if (set.favourite) head.append(el("span", { class: "badge fav", text: "Favourite #" + set.favourite }));
+    if (set.favorite) head.append(el("span", { class: "badge fav", text: "Favorite #" + set.favorite }));
     if (set.excluded) head.append(el("span", { class: "badge excl", text: "Excluded" }));
     const autoParts = PARTS.filter(([k]) => auto[k] === set.id).map(([, l]) => l.toLowerCase());
     if (autoParts.length) head.append(el("span", { class: "badge auto", text: "Used now for " + autoParts.join(", ") }));
-    head.append(el("span", { class: "badge", text: plural(set.seasons.length, "season poster", "season posters") + " · " + plural(set.card_count, "title card", "title cards") }));
+    if (setsData.type === "show") head.append(el("span", { class: "badge", text: plural(set.seasons.length, "season poster", "season posters") + " · " + plural(set.card_count, "title card", "title cards") }));
+    if (set.collection) head.append(el("span", { class: "badge", text: "Collection: " + set.collection }));
 
     const main = el("div", { class: "main" });
     if (set.poster) main.append(el("img", { class: "p", src: set.poster, alt: "Poster", loading: "lazy" }));
@@ -929,11 +1077,44 @@ function renderSets() {
       parts.append(el("button", { type: "button", class: "ghost", text: all ? "Unpick whole set" : "Use whole set",
         onclick: () => { for (const [k] of offered) staged[k] = all ? "" : set.id; renderSets(); } }));
     }
+    if (set.collection && setsData.type === "movie") {
+      parts.append(el("button", { type: "button", class: "ghost", text: "Use for every movie in this collection…",
+        onclick: () => showCollection(card, set) }));
+    }
     card.append(parts);
     if (offered.some(([k]) => staged[k] === set.id)) card.classList.add("chosen");
     box.append(card);
   }
 }
+// showCollection lists the movies a collection set covers and applies it to all of them.
+async function showCollection(card, set) {
+  let panel = card.querySelector(".collection");
+  if (panel) { panel.remove(); return; }
+  panel = el("div", { class: "collection" }, el("p", { class: "hint", text: "Loading the collection…" }));
+  card.append(panel);
+  let movies;
+  try { movies = (await api("/api/collection?id=" + set.id)).movies; }
+  catch (e) { panel.firstChild.textContent = e.message; return; }
+  panel.innerHTML = "";
+  const list = el("ul");
+  for (const m of movies) {
+    const what = [m.poster && "poster", m.background && "background"].filter(Boolean).join(" + ");
+    list.append(el("li", { text: m.title + (m.year ? " (" + m.year + ")" : "") + " — " + what }));
+  }
+  const msg = el("p", { class: "msg" });
+  const apply = async (poster, background) => {
+    say(msg, "Saving…");
+    try {
+      const res = await api("/api/picks/collection", { method: "POST", body: JSON.stringify({ set_id: set.id, poster, background }) });
+      say(msg, res.status, true);
+      loadPicks();
+    } catch (e) { say(msg, e.message, false); }
+  };
+  const buttons = el("div", { class: "row" }, el("button", { type: "button", text: "Use posters for all " + movies.length, onclick: () => apply(true, false) }));
+  if (movies.some((m) => m.background)) buttons.append(el("button", { type: "button", class: "primary", text: "Use posters + backgrounds for all", onclick: () => apply(true, true) }));
+  panel.append(el("b", { text: set.collection + " by " + set.creator }), list, buttons, msg);
+}
+
 $("pickReset").onclick = () => { staged = Object.assign(emptyPick(), setsData.pick || {}); renderSets(); say($("pickMsg"), ""); };
 $("pickClear").onclick = () => { staged = emptyPick(); renderSets(); say($("pickMsg"), "All picks cleared here. Save to apply."); };
 $("pickSave").onclick = async () => {
@@ -951,27 +1132,28 @@ $("pickSave").onclick = async () => {
 let pickItems = [];
 async function loadPicks() {
   try { pickItems = (await api("/api/picks")).items; } catch (_) { pickItems = []; }
-  renderPicks();
+  renderPicks(true);
 }
-function renderPicks() {
-  const body = $("pickRows"), f = $("picksFilter").value.trim().toLowerCase();
-  body.innerHTML = "";
-  const rows = pickItems.filter((p) => !f || (p.title || "").toLowerCase().includes(f));
-  if (!rows.length) { body.append(el("tr", {}, el("td", { colspan: "4", class: "hint", text: pickItems.length ? "No titles match." : "No picks yet. Find a title above." }))); return; }
-  for (const p of rows) {
-    const name = (p.title || "TMDB " + p.tmdb) + (p.year ? " (" + p.year + ")" : "");
-    const open = el("button", { type: "button", text: "Open", onclick: () => {
-      $("setsType").value = p.type; $("setsQ").value = p.tmdb; findSets(p.type, p.tmdb); window.scrollTo({ top: 0, behavior: "smooth" });
-    } });
-    const rm = el("button", { type: "button", class: "danger", text: "Remove", onclick: async () => {
-      try { await api("/api/picks", { method: "POST", body: JSON.stringify(Object.assign({ type: p.type, tmdb: p.tmdb, title: p.title, year: p.year || 0 }, emptyPick())) }); loadPicks(); }
-      catch (e) { say($("pickMsg"), e.message, false); }
-    } });
-    body.append(el("tr", {}, el("td", { text: name }), el("td", { text: p.type === "movie" ? "Movie" : "Show" }),
-      el("td", { text: p.parts }), el("td", {}, el("div", { class: "row" }, open, rm))));
-  }
+const picksPager = makePager("picks", $("pickRows"), 3, (p) => {
+  const name = (p.title || "TMDB " + p.tmdb) + (p.year ? " (" + p.year + ")" : "");
+  const open = el("button", { type: "button", text: "Open", onclick: () => {
+    $("setsType").value = p.type; $("setsQ").value = p.tmdb; findSets(p.type, p.tmdb); window.scrollTo({ top: 0, behavior: "smooth" });
+  } });
+  const rm = el("button", { type: "button", class: "danger", text: "Remove", onclick: async () => {
+    try { await api("/api/picks", { method: "POST", body: JSON.stringify(Object.assign({ type: p.type, tmdb: p.tmdb, title: p.title, year: p.year || 0 }, emptyPick())) }); loadPicks(); }
+    catch (e) { say($("pickMsg"), e.message, false); }
+  } });
+  return el("tr", {}, el("td", { text: name }), el("td", { text: p.parts }), el("td", {}, el("div", { class: "row" }, open, rm)));
+}, () => (pickItems.length ? "No titles match." : "No picks yet. Find a title above."));
+function renderPicks(keepPage) {
+  const counts = {};
+  for (const p of pickItems) { const k = p.type === "movie" ? "Movies" : "TV Shows"; counts[k] = (counts[k] || 0) + 1; }
+  const group = renderPills($("pickPills"), counts, "picksGroup", () => renderPicks(false));
+  const f = $("picksFilter").value.trim().toLowerCase();
+  picksPager.set(pickItems.filter((p) => (p.type === "movie" ? "Movies" : "TV Shows") === group &&
+    (!f || (p.title || "").toLowerCase().includes(f))), keepPage);
 }
-$("picksFilter").addEventListener("input", renderPicks);
+$("picksFilter").addEventListener("input", () => renderPicks(false));
 
 /* ---------- Try it ---------- */
 $("previewBtn").onclick = async () => {
@@ -995,19 +1177,17 @@ $("previewQ").addEventListener("keydown", (e) => { if (e.key === "Enter") $("pre
 let logItems = [];
 async function loadLog() {
   try { logItems = (await api("/api/activity")).items; } catch (_) {}
-  renderLog();
+  renderLog(true);
 }
-function renderLog() {
-  const body = $("logRows"), f = $("logFilter").value;
-  body.innerHTML = "";
-  const rows = logItems.filter((a) => !f || a.result === f);
-  if (!rows.length) { body.append(el("tr", {}, el("td", { colspan: "4", class: "hint", text: "Nothing here yet. Refresh a movie or show in Plex." }))); return; }
-  for (const a of rows) {
-    body.append(el("tr", {}, el("td", { class: "when", text: new Date(a.time).toLocaleString() }), el("td", { text: a.item }),
-      el("td", {}, el("span", { class: "pill " + a.result.replace(/\s+/g, "-"), text: a.result })), el("td", { text: a.detail })));
-  }
+const logPager = makePager("log", $("logRows"), 4, (a) => el("tr", {},
+  el("td", { class: "when", text: new Date(a.time).toLocaleString() }), el("td", { text: a.item }),
+  el("td", {}, el("span", { class: "pill " + a.result.replace(/\s+/g, "-"), text: a.result })), el("td", { text: a.detail })),
+  () => "Nothing here yet. Refresh a movie or show in Plex.");
+function renderLog(keepPage) {
+  const f = $("logFilter").value;
+  logPager.set(logItems.filter((a) => !f || a.result === f), keepPage);
 }
-$("logFilter").onchange = renderLog;
+$("logFilter").onchange = () => renderLog(false);
 $("refreshLog").onclick = loadLog;
 
 /* ---------- start ---------- */

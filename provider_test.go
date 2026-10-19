@@ -61,7 +61,7 @@ func fakeMediux(t *testing.T) *httptest.Server {
 				"titlecards":     []any{card(14, 1, 1), card(15, 1, 2), card(16, 2, 1), card(17, 2, 2)},
 				"files":          []any{}},
 			// Partial set (season 1 only) from the top-priority creator.
-			map[string]any{"id": "favourite", "popularity": 1, "user_created": map[string]any{"username": "willtong93"},
+			map[string]any{"id": "favorite", "popularity": 1, "user_created": map[string]any{"username": "willtong93"},
 				"show_poster": []any{asset(20)}, "show_backdrop": []any{},
 				"season_posters": []any{season(21, 1)},
 				"titlecards":     []any{card(22, 1, 1), card(23, 1, 2)},
@@ -124,12 +124,19 @@ func fakeMediux(t *testing.T) *httptest.Server {
 			if strings.EqualFold(fmt.Sprint(body.Variables["q"]), "Dirty Grandpa") {
 				exact = []any{map[string]any{"id": "291870", "title": "Dirty Grandpa", "release_date": "2016-01-22"}}
 			}
-			data = map[string]any{"exact": exact, "near": []any{
+			data = map[string]any{"exact": exact, "alt": []any{}, "starts": []any{}, "near": []any{
 				map[string]any{"id": "1", "title": "Dirty Grandpa Returns", "release_date": "2030-01-01"},
 				map[string]any{"id": "291870", "title": "Dirty Grandpa", "release_date": "2016-01-22"},
 			}}
+		case strings.Contains(body.Query, "collection_sets_by_id"):
+			movie := func(id, title string) map[string]any {
+				return map[string]any{"movie": map[string]any{"id": id, "title": title, "release_date": "2016-01-22"}}
+			}
+			data = map[string]any{"collection_sets_by_id": map[string]any{
+				"movie_posters":   []any{movie("291870", "Dirty Grandpa"), movie("555", "Dirty Grandpa 2")},
+				"movie_backdrops": []any{movie("291870", "Dirty Grandpa")}}}
 		case strings.Contains(body.Query, "exact:shows"):
-			data = map[string]any{"exact": []any{}, "near": []any{}}
+			data = map[string]any{"exact": []any{}, "alt": []any{}, "starts": []any{}, "near": []any{}}
 		case strings.Contains(body.Query, "contributors"):
 			data = map[string]any{"contributors": []any{map[string]any{"username": "willtong93"}}}
 		default:
@@ -566,7 +573,20 @@ func (f *fakePlex) server(t *testing.T) *httptest.Server {
 			f.mu.Unlock()
 		case r.URL.Path == "/library/metadata/777/children":
 			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Metadata": []any{
-				map[string]any{"ratingKey": "801"}, map[string]any{"ratingKey": "802"}}}})
+				map[string]any{"ratingKey": "801", "index": 1, "thumb": "/library/metadata/801/thumb/1"},
+				map[string]any{"ratingKey": "802", "index": 2, "thumb": "/library/metadata/802/thumb/1"}}}})
+		case r.URL.Path == "/library/metadata/777":
+			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Metadata": []any{map[string]any{
+				"title": "1923", "thumb": "/library/metadata/777/thumb/9", "art": "/library/metadata/777/art/9",
+				"Field": []any{map[string]any{"name": "thumb", "locked": true}},
+				"Label": []any{map[string]any{"tag": "Overlay"}}}}}})
+		case r.URL.Path == "/photo/:/transcode":
+			if !strings.HasPrefix(r.URL.Query().Get("url"), "/library/metadata/") {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("\x89PNG fake"))
 		case r.URL.Path == "/library/metadata/777/allLeaves":
 			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Metadata": []any{
 				map[string]any{"ratingKey": "901"}, map[string]any{"ratingKey": "902"}, map[string]any{"ratingKey": "903"}}}})
@@ -704,7 +724,7 @@ func TestPagePickBeatsAuraAndCreatorPriority(t *testing.T) {
 
 	// Title cards: the rules would take the complete set, AURA pinned S1E1
 	// from it too; the page pick is willtong93's partial set.
-	savePick(t, h, map[string]any{"type": "show", "tmdb": "194764", "title": "1923", "titlecard_set": "favourite"})
+	savePick(t, h, map[string]any{"type": "show", "tmdb": "194764", "title": "1923", "titlecard_set": "favorite"})
 	s1 := metadata(t, h.get(t, "/tv/library/metadata/tmdb-194764-s1?includeChildren=1"))[0]
 	eps := s1["Children"].(map[string]any)["Metadata"].([]any)
 	if got := assetOf(eps[0].(map[string]any)["thumb"]); got != uuid(22) {
@@ -722,7 +742,7 @@ func TestPagePickBeatsAuraAndCreatorPriority(t *testing.T) {
 	if n := len(sets["sets"].([]any)); n != 2 {
 		t.Errorf("want 2 sets listed, got %d", n)
 	}
-	if sets["pick"].(map[string]any)["titlecard_set"] != "favourite" {
+	if sets["pick"].(map[string]any)["titlecard_set"] != "favorite" {
 		t.Errorf("saved pick not reported: %v", sets["pick"])
 	}
 
@@ -746,7 +766,7 @@ func TestSavingAPickUnlocksAndRefreshesPlex(t *testing.T) {
 		s.PlexServers = []plexServer{{Name: "Unlimited-Primary", URL: plexSrv.URL, Token: "plex-token"}}
 		s.ReplaceLocked = true
 	})
-	savePick(t, h, map[string]any{"type": "show", "tmdb": "194764", "title": "1923", "season_set": "favourite"})
+	savePick(t, h, map[string]any{"type": "show", "tmdb": "194764", "title": "1923", "season_set": "favorite"})
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		fp.mu.Lock()
@@ -783,5 +803,66 @@ func TestSavingAPickUnlocksAndRefreshesPlex(t *testing.T) {
 	fp.mu.Unlock()
 	if len(edits) != 0 {
 		t.Errorf("nothing should be unlocked without the option: %v", edits)
+	}
+}
+
+func TestPlexNowShowsCurrentArtworkThroughTheContainer(t *testing.T) {
+	fp := &fakePlex{}
+	plexSrv := fp.server(t)
+	h := newHarness(t, func(s *settings) {
+		s.PlexServers = []plexServer{{Name: "Unlimited-Primary", URL: plexSrv.URL, Token: "plex-token"}}
+	})
+	out := h.get(t, "/api/plex-current?type=show&tmdb=194764")
+	servers := out["servers"].([]any)
+	if len(servers) != 1 {
+		t.Fatalf("want one server, got %v", out)
+	}
+	cur := servers[0].(map[string]any)
+	if cur["locked"] != true || cur["overlay"] != true || len(cur["seasons"].([]any)) != 2 {
+		t.Fatalf("current artwork: %v", cur)
+	}
+	poster := cur["poster"].(string)
+	if !strings.HasPrefix(poster, "/api/plex-image?") || strings.Contains(poster, "plex-token") {
+		t.Fatalf("poster should go through the container without the token: %s", poster)
+	}
+	res, err := http.Get(h.server.URL + poster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 || res.Header.Get("Content-Type") != "image/png" {
+		t.Fatalf("relayed image: %d %s", res.StatusCode, res.Header.Get("Content-Type"))
+	}
+	// Only Plex library artwork can be relayed.
+	res, err = http.Get(h.server.URL + "/api/plex-image?s=0&w=100&h=100&p=%2Fsystem%2Fsettings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("non-library path should be refused, got %d", res.StatusCode)
+	}
+}
+
+func TestCollectionPickCoversEveryMovie(t *testing.T) {
+	h := newHarness(t, nil)
+	// An existing pick for one movie keeps its other parts.
+	if err := h.app.provider.picks.put(userPick{Type: typeMovie, TMDB: "555", Title: "Dirty Grandpa 2", BackSet: "set-a"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(map[string]any{"set_id": "77", "poster": true, "background": true})
+	req, _ := http.NewRequest(http.MethodPost, h.server.URL+"/api/picks/collection", strings.NewReader(string(raw)))
+	req.Header.Set("X-Mediux-Settings", "1")
+	out := decode(t, mustDo(t, req))
+	if !strings.Contains(out["status"].(string), "2 movies") {
+		t.Fatalf("status: %v", out)
+	}
+	store := h.app.provider.picks
+	if p := store.get(typeMovie, "291870"); p == nil || p.PosterSet != "77" || p.BackSet != "77" {
+		t.Fatalf("Dirty Grandpa pick: %+v", p)
+	}
+	// The second movie has no collection background, so its own stays.
+	if p := store.get(typeMovie, "555"); p == nil || p.PosterSet != "77" || p.BackSet != "set-a" {
+		t.Fatalf("Dirty Grandpa 2 pick: %+v", p)
 	}
 }

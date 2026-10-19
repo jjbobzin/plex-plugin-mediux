@@ -238,3 +238,121 @@ func (pc *plexClient) unlock(ctx context.Context, srv plexServer, typ mediaType,
 	}
 	return edit(plexTypeEpisode, episodes, "thumb")
 }
+
+// plexCurrent is what one Plex server shows for a title right now.
+type plexCurrent struct {
+	Server     string     `json:"server"`
+	Title      string     `json:"title"`
+	Poster     string     `json:"poster,omitempty"`
+	Background string     `json:"background,omitempty"`
+	Locked     bool       `json:"locked"`  // poster locked: uploaded by AURA, Kometa or by hand
+	Overlay    bool       `json:"overlay"` // carries Kometa's Overlay label
+	Seasons    []setImage `json:"seasons,omitempty"`
+	Error      string     `json:"error,omitempty"`
+}
+
+type plexItem struct {
+	Title string `json:"title"`
+	Index int    `json:"index"`
+	Thumb string `json:"thumb"`
+	Art   string `json:"art"`
+	Field []struct {
+		Name   string `json:"name"`
+		Locked bool   `json:"locked"`
+	} `json:"Field"`
+	Label []struct {
+		Tag string `json:"tag"`
+	} `json:"Label"`
+}
+
+// current reads the title's artwork from every configured server. Image
+// addresses point back at this container (/api/plex-image), which adds the
+// Plex token, so the token never reaches the browser.
+func (pc *plexClient) current(ctx context.Context, servers []plexServer, typ mediaType, tmdb string) []plexCurrent {
+	var out []plexCurrent
+	for i, srv := range servers {
+		if srv.Token == "" {
+			continue
+		}
+		cur := plexCurrent{Server: srv.Name}
+		idx, err := pc.index(ctx, srv, 6*time.Hour)
+		if err != nil {
+			cur.Error = err.Error()
+			out = append(out, cur)
+			continue
+		}
+		refs := idx.items[string(typ)+":"+tmdb]
+		if len(refs) == 0 {
+			continue // not on this server
+		}
+		var meta struct {
+			MediaContainer struct {
+				Metadata []plexItem `json:"Metadata"`
+			} `json:"MediaContainer"`
+		}
+		if err := pc.do(ctx, srv, http.MethodGet, "/library/metadata/"+url.PathEscape(refs[0].Key), &meta); err != nil || len(meta.MediaContainer.Metadata) == 0 {
+			if err != nil {
+				cur.Error = err.Error()
+			}
+			out = append(out, cur)
+			continue
+		}
+		m := meta.MediaContainer.Metadata[0]
+		cur.Title = m.Title
+		cur.Poster = plexImageURL(i, m.Thumb, 300, 450)
+		cur.Background = plexImageURL(i, m.Art, 480, 270)
+		for _, f := range m.Field {
+			if f.Name == "thumb" && f.Locked {
+				cur.Locked = true
+			}
+		}
+		for _, l := range m.Label {
+			if l.Tag == "Overlay" {
+				cur.Overlay = true
+			}
+		}
+		if typ == typeShow {
+			var kids struct {
+				MediaContainer struct {
+					Metadata []plexItem `json:"Metadata"`
+				} `json:"MediaContainer"`
+			}
+			if err := pc.do(ctx, srv, http.MethodGet, "/library/metadata/"+url.PathEscape(refs[0].Key)+"/children", &kids); err == nil {
+				for _, k := range kids.MediaContainer.Metadata {
+					if k.Thumb != "" {
+						cur.Seasons = append(cur.Seasons, setImage{Season: k.Index, URL: plexImageURL(i, k.Thumb, 150, 225)})
+					}
+				}
+			}
+		}
+		out = append(out, cur)
+	}
+	return out
+}
+
+func plexImageURL(server int, path string, w, h int) string {
+	if path == "" {
+		return ""
+	}
+	return fmt.Sprintf("/api/plex-image?s=%d&w=%d&h=%d&p=%s", server, w, h, url.QueryEscape(path))
+}
+
+// image fetches a resized image from a Plex server through its photo
+// transcoder. Only library artwork paths are allowed.
+func (pc *plexClient) image(ctx context.Context, srv plexServer, path string, w, h int) (*http.Response, error) {
+	if !strings.HasPrefix(path, "/library/metadata/") || strings.Contains(path, "..") {
+		return nil, errors.New("not a library image")
+	}
+	q := url.Values{}
+	q.Set("width", fmt.Sprint(w))
+	q.Set("height", fmt.Sprint(h))
+	q.Set("minSize", "1")
+	q.Set("upscale", "1")
+	q.Set("url", path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(srv.URL, "/")+"/photo/:/transcode?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Plex-Token", srv.Token)
+	return pc.http.Do(req)
+}

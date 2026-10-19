@@ -44,6 +44,10 @@ func (ui *webUI) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sets", ui.sets)
 	mux.HandleFunc("GET /api/picks", ui.listPicks)
 	mux.HandleFunc("POST /api/picks", ui.guard(ui.savePick))
+	mux.HandleFunc("POST /api/picks/collection", ui.guard(ui.saveCollectionPick))
+	mux.HandleFunc("GET /api/collection", ui.collection)
+	mux.HandleFunc("GET /api/plex-current", ui.plexNow)
+	mux.HandleFunc("GET /api/plex-image", ui.plexImage)
 	mux.HandleFunc("GET /img/{id}", ui.relayImage)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 }
