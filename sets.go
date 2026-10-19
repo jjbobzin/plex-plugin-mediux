@@ -253,14 +253,8 @@ func (ui *webUI) savePick(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		bg, done := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer done()
-		asked, err := ui.plex.refresh(bg, cfg.PlexServers, p.Type, p.TMDB, cfg.ReplaceLocked)
-		detail := what
-		switch {
-		case len(asked) > 0:
-			detail += "; refreshed in Plex: " + strings.Join(unique(asked), ", ")
-		case err == nil:
-			detail += "; not found on your Plex servers"
-		}
+		res, err := ui.plex.refresh(bg, cfg.PlexServers, p.Type, p.TMDB, cfg.ReplaceLocked)
+		detail := what + "; " + res.describe()
 		result := "picked"
 		if err != nil {
 			detail += "; Plex refresh problem: " + err.Error()
@@ -469,16 +463,13 @@ func (ui *webUI) saveCollectionPick(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		for _, p := range picked {
 			bg, done := context.WithTimeout(context.Background(), 3*time.Minute)
-			asked, err := ui.plex.refresh(bg, cfg.PlexServers, typeMovie, p.TMDB, cfg.ReplaceLocked)
+			res, err := ui.plex.refresh(bg, cfg.PlexServers, typeMovie, p.TMDB, cfg.ReplaceLocked)
 			done()
-			detail, result := "Collection pick saved", "picked"
-			switch {
-			case err != nil:
+			detail, result := "Collection pick saved; "+res.describe(), "picked"
+			if err != nil {
 				detail, result = detail+"; Plex refresh problem: "+err.Error(), "error"
-			case len(asked) > 0:
-				detail += "; refreshed in Plex: " + strings.Join(unique(asked), ", ")
-			default:
-				detail += "; not in your Plex libraries yet (it will be used when it's added)"
+			} else if len(res.Asked) == 0 && len(res.Skipped) == 0 {
+				detail = "Collection pick saved; not in your Plex libraries yet (it will be used when it's added)"
 			}
 			ui.activity.add("movie", p.Title, result, detail)
 		}

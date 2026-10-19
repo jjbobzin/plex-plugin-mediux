@@ -318,14 +318,10 @@ func (w *watcher) checkOne(ctx context.Context, it trackedItem, cfg settings) bo
 	what := describeSlots(changed)
 	footer := "Plex refresh is off"
 	if cfg.RefreshPlex {
-		asked, err := w.plex.refresh(ctx, cfg.PlexServers, it.Type, it.TMDB, false)
-		switch {
-		case len(asked) > 0:
-			footer = "Refreshed in Plex: " + strings.Join(unique(asked), ", ")
-		case err != nil:
-			footer = "Plex refresh failed: " + err.Error()
-		default:
-			footer = "Not found on your Plex servers"
+		res, err := w.plex.refresh(ctx, cfg.PlexServers, it.Type, it.TMDB, false)
+		footer = res.describe()
+		if err != nil {
+			footer += "; Plex refresh problem: " + err.Error()
 		}
 	}
 	w.p.activity.add(string(it.Type), it.Title, "new artwork", what+"; "+footer)

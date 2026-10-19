@@ -20,6 +20,19 @@ import (
 type plexRef struct {
 	Key     string // ratingKey
 	Section string // library section ID
+	Library string // library name
+	Custom  bool   // library uses a custom agent (one that can include Mediux Artwork)
+}
+
+// builtInAgent reports Plex's own agents. Libraries on them never ask this
+// provider for artwork, so they are never refreshed or unlocked from here.
+func builtInAgent(agent string) bool {
+	switch agent {
+	case "", "tv.plex.agents.movie", "tv.plex.agents.series", "tv.plex.agents.none",
+		"tv.plex.agents.music", "tv.plex.agents.photo":
+		return true
+	}
+	return strings.HasPrefix(agent, "com.plexapp.agents.")
 }
 
 type plexIndex struct {
@@ -88,8 +101,10 @@ func (pc *plexClient) index(ctx context.Context, srv plexServer, maxAge time.Dur
 	var sections struct {
 		MediaContainer struct {
 			Directory []struct {
-				Key  string `json:"key"`
-				Type string `json:"type"`
+				Key   string `json:"key"`
+				Type  string `json:"type"`
+				Title string `json:"title"`
+				Agent string `json:"agent"`
 			} `json:"Directory"`
 		} `json:"MediaContainer"`
 	}
@@ -125,7 +140,7 @@ func (pc *plexClient) index(ctx context.Context, srv plexServer, maxAge time.Dur
 			for _, g := range guids {
 				if id, ok := strings.CutPrefix(g.ID, "tmdb://"); ok {
 					k := string(kind) + ":" + id
-					built.items[k] = append(built.items[k], plexRef{ratingKey, d.Key})
+					built.items[k] = append(built.items[k], plexRef{ratingKey, d.Key, d.Title, !builtInAgent(d.Agent)})
 				}
 			}
 		}
@@ -136,13 +151,35 @@ func (pc *plexClient) index(ctx context.Context, srv plexServer, maxAge time.Dur
 	return built, nil
 }
 
-// refresh asks every configured server holding this title to refresh it.
-// With replaceLocked, artwork locked in Plex (uploaded by AURA, Kometa or by
-// hand) is unlocked first and Kometa's "Overlay" label is cleared, so the
-// refresh can apply the new artwork and Kometa re-applies its overlays on top.
-// It returns the names of the servers that were asked.
-func (pc *plexClient) refresh(ctx context.Context, servers []plexServer, typ mediaType, tmdb string, replaceLocked bool) ([]string, error) {
-	var asked []string
+// refreshResult says where a refresh went.
+type refreshResult struct {
+	Asked   []string // servers asked to refresh
+	Skipped []string // "Movies on Unlimited-Primary": libraries not on a custom agent
+}
+
+// describe turns a refresh result into words for the Log.
+func (r refreshResult) describe() string {
+	var parts []string
+	if len(r.Asked) > 0 {
+		parts = append(parts, "refreshed in Plex: "+strings.Join(unique(r.Asked), ", "))
+	}
+	if len(r.Skipped) > 0 {
+		parts = append(parts, "skipped "+strings.Join(unique(r.Skipped), ", ")+" (not on a Mediux agent)")
+	}
+	if len(parts) == 0 {
+		return "not found on your Plex servers"
+	}
+	return strings.Join(parts, "; ")
+}
+
+// refresh asks every configured server holding this title to refresh it, in
+// libraries that use a custom agent only: libraries on Plex's own agents
+// never use this provider, so refreshing or unlocking there would only undo
+// artwork set by AURA or Kometa. With replaceLocked, artwork locked in Plex
+// is unlocked first and Kometa's "Overlay" label is cleared, so the refresh
+// can apply the new artwork and Kometa re-applies its overlays on top.
+func (pc *plexClient) refresh(ctx context.Context, servers []plexServer, typ mediaType, tmdb string, replaceLocked bool) (refreshResult, error) {
+	var res refreshResult
 	var errs []error
 	for _, srv := range servers {
 		if srv.Token == "" {
@@ -161,6 +198,10 @@ func (pc *plexClient) refresh(ctx context.Context, servers []plexServer, typ med
 			}
 		}
 		for _, ref := range refs {
+			if !ref.Custom {
+				res.Skipped = append(res.Skipped, ref.Library+" on "+srv.Name)
+				continue
+			}
 			if replaceLocked {
 				if err := pc.unlock(ctx, srv, typ, ref); err != nil {
 					errs = append(errs, err)
@@ -171,10 +212,10 @@ func (pc *plexClient) refresh(ctx context.Context, servers []plexServer, typ med
 				errs = append(errs, err)
 				continue
 			}
-			asked = append(asked, srv.Name)
+			res.Asked = append(res.Asked, srv.Name)
 		}
 	}
-	return asked, errors.Join(errs...)
+	return res, errors.Join(errs...)
 }
 
 // Plex's numeric item types for library edits.
@@ -253,6 +294,8 @@ type plexCurrent struct {
 	Locked     bool       `json:"locked"`  // poster locked: uploaded by AURA, Kometa or by hand
 	Overlay    bool       `json:"overlay"` // carries Kometa's Overlay label
 	Seasons    []setImage `json:"seasons,omitempty"`
+	Library    string     `json:"library,omitempty"`
+	Custom     bool       `json:"custom"` // library uses a custom agent (Mediux can apply)
 	Error      string     `json:"error,omitempty"`
 }
 
@@ -290,12 +333,20 @@ func (pc *plexClient) current(ctx context.Context, servers []plexServer, typ med
 		if len(refs) == 0 {
 			continue // not on this server
 		}
+		ref := refs[0]
+		for _, r := range refs {
+			if r.Custom { // show the copy Mediux can change, if there is one
+				ref = r
+				break
+			}
+		}
+		cur.Library, cur.Custom = ref.Library, ref.Custom
 		var meta struct {
 			MediaContainer struct {
 				Metadata []plexItem `json:"Metadata"`
 			} `json:"MediaContainer"`
 		}
-		if err := pc.do(ctx, srv, http.MethodGet, "/library/metadata/"+url.PathEscape(refs[0].Key), &meta); err != nil || len(meta.MediaContainer.Metadata) == 0 {
+		if err := pc.do(ctx, srv, http.MethodGet, "/library/metadata/"+url.PathEscape(ref.Key), &meta); err != nil || len(meta.MediaContainer.Metadata) == 0 {
 			if err != nil {
 				cur.Error = err.Error()
 			}
@@ -322,7 +373,7 @@ func (pc *plexClient) current(ctx context.Context, servers []plexServer, typ med
 					Metadata []plexItem `json:"Metadata"`
 				} `json:"MediaContainer"`
 			}
-			if err := pc.do(ctx, srv, http.MethodGet, "/library/metadata/"+url.PathEscape(refs[0].Key)+"/children", &kids); err == nil {
+			if err := pc.do(ctx, srv, http.MethodGet, "/library/metadata/"+url.PathEscape(ref.Key)+"/children", &kids); err == nil {
 				for _, k := range kids.MediaContainer.Metadata {
 					if k.Thumb != "" {
 						cur.Seasons = append(cur.Seasons, setImage{Season: k.Index, URL: plexImageURL(i, k.Thumb, 150, 225)})

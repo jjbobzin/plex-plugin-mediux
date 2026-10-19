@@ -560,7 +560,13 @@ func (f *fakePlex) server(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"friendlyName": "Unlimited-Primary"}})
 		case r.URL.Path == "/library/sections":
 			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Directory": []any{
-				map[string]any{"key": "1", "type": "show"}, map[string]any{"key": "2", "type": "artist"}}}})
+				map[string]any{"key": "1", "type": "show", "title": "zMediux TV", "agent": "tv.plex.agents.custom.abc123"},
+				map[string]any{"key": "2", "type": "artist", "title": "Music", "agent": "tv.plex.agents.music"},
+				// The same show in a library still on Plex Series: never touched.
+				map[string]any{"key": "3", "type": "show", "title": "TV Shows", "agent": "tv.plex.agents.series"}}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/library/sections/3/all":
+			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Metadata": []any{
+				map[string]any{"ratingKey": "333", "guid": "plex://show/x", "Guid": []any{map[string]any{"id": "tmdb://194764"}}}}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/library/sections/1/all":
 			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Metadata": []any{
 				// Real Plex sends both "guid" (one plex:// string) and "Guid" (a list).
@@ -785,9 +791,12 @@ func TestSavingAPickUnlocksAndRefreshesPlex(t *testing.T) {
 	fp.edits = nil
 	fp.mu.Unlock()
 	if len(refreshed) != 1 || refreshed[0] != "/library/metadata/777/refresh" {
-		t.Fatalf("refreshes: %v", refreshed)
+		t.Fatalf("only the custom-agent library may be refreshed: %v", refreshed)
 	}
 	all := strings.Join(edits, "\n")
+	if strings.Contains(all, "333") {
+		t.Fatalf("a library on Plex Series must never be unlocked: %s", all)
+	}
 	for _, want := range []string{"type=2", "id=777", "thumb.locked=0", "label%5B%5D.tag.tag-=Overlay",
 		"type=3", "id=801%2C802", "type=4", "id=901%2C902%2C903"} {
 		if !strings.Contains(all, want) {
@@ -798,8 +807,12 @@ func TestSavingAPickUnlocksAndRefreshesPlex(t *testing.T) {
 	s := h.store.get()
 	s.ReplaceLocked = false
 	_ = h.store.save(s)
-	if _, err := h.app.plexAPI.refresh(context.Background(), s.PlexServers, typeShow, "194764", false); err != nil {
+	res, err := h.app.plexAPI.refresh(context.Background(), s.PlexServers, typeShow, "194764", false)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if got := res.describe(); got != "refreshed in Plex: Unlimited-Primary; skipped TV Shows on Unlimited-Primary (not on a Mediux agent)" {
+		t.Errorf("log text: %q", got)
 	}
 	fp.mu.Lock()
 	edits = append([]string(nil), fp.edits...)

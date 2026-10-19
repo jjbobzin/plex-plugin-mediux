@@ -1052,6 +1052,8 @@ async function loadPlexNow() {
   for (const srv of d.servers) {
     const head = el("div", { class: "head" }, el("b", { text: srv.server }));
     if (srv.error) { box.append(el("div", { class: "srv" }, head, el("p", { class: "msg err", text: srv.error }))); continue; }
+    if (srv.library) head.append(el("span", { class: "badge", text: srv.library }));
+    if (!srv.custom) head.append(el("span", { class: "badge warn", text: "Library not on a Mediux agent: picks don't apply here" }));
     if (srv.locked) head.append(el("span", { class: "badge warn", text: "Poster locked" }));
     if (srv.overlay) head.append(el("span", { class: "badge", text: "Kometa overlay" }));
     if (srv.locked && !$("replaceLocked").checked) head.append(el("span", { class: "hint", text: "A pick won't show here unless “Replace artwork that's locked” is on." }));
