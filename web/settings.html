@@ -160,6 +160,9 @@
   .pickbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; padding: 12px 14px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; }
   .pickbar .summary { flex: 1; min-width: 200px; color: var(--muted); font-size: 14px; }
   .pickbar .summary b { color: var(--text); }
+  /* Unsaved choices: the bar follows you down the list of sets. */
+  .pickbar.dirty { position: sticky; top: 8px; z-index: 15; border-color: var(--accent); box-shadow: 0 6px 24px rgba(0,0,0,.45); }
+  .pickbar .unsaved { color: var(--accent); font-weight: 600; }
 
   .others { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; font-size: 13.5px; color: var(--muted); }
   .others button { padding: 4px 11px; border-radius: 999px; font-size: 13px; }
@@ -1146,6 +1149,16 @@ const PARTS = [
 ];
 let setsData = null, staged = null;
 const emptyPick = () => ({ poster_set: "", background_set: "", season_set: "", titlecard_set: "" });
+// pickDirty: choices made in the picker that haven't been saved yet.
+const pickDirty = () => !!(setsData && staged) && PARTS.some(([k]) => (staged[k] || "") !== ((setsData.pick || {})[k] || ""));
+// leavePicks asks before throwing away unsaved choices; true means go ahead.
+function leavePicks() {
+  if (!pickDirty()) return true;
+  if (!confirm("Your choices for " + (setsData.title || "this title") + " aren't saved yet. Leave without saving?")) return false;
+  setsData = null;
+  return true;
+}
+window.addEventListener("beforeunload", (e) => { if (pickDirty()) e.preventDefault(); });
 
 function renderOthers(type) {
   const box = $("setsOthers");
@@ -1207,6 +1220,7 @@ async function loadPlexNow() {
 }
 
 async function findSets(type, q) {
+  if (!leavePicks()) return;
   $("setsResult").hidden = true;
   $("setsOthers").hidden = true;
   say($("setsMsg"), "Looking up…");
@@ -1228,6 +1242,7 @@ async function findSets(type, q) {
 // openTitle shows one title's sets, by its exact ID, with its name in the box.
 let libScrollY = 0, libQuery = ""; // libQuery: what you typed, which filters the grid
 function openTitle(t) {
+  if (!leavePicks()) return;
   if ($("setsResult").hidden) libScrollY = window.scrollY; // only when leaving the grid
   $("setsType").value = t.type;
   $("setsQ").value = t.title || t.tmdb;
@@ -1241,8 +1256,8 @@ function closeTitle() {
   say($("setsMsg"), "");
 }
 // Close starts over; Back returns to the library as you left it.
-$("closeTitle").onclick = () => { closeTitle(); $("setsQ").value = libQuery = ""; renderLibrary(false); };
-$("backToLibrary").onclick = () => { closeTitle(); $("setsQ").value = libQuery; renderLibrary(true); window.scrollTo({ top: libScrollY || $("libraryCard").offsetTop, behavior: "smooth" }); };
+$("closeTitle").onclick = () => { if (!leavePicks()) return; closeTitle(); $("setsQ").value = libQuery = ""; renderLibrary(false); };
+$("backToLibrary").onclick = () => { if (!leavePicks()) return; closeTitle(); $("setsQ").value = libQuery; renderLibrary(true); window.scrollTo({ top: libScrollY || $("libraryCard").offsetTop, behavior: "smooth" }); };
 
 // Live search: matches come from the library already loaded in this page,
 // so typing never calls the server; Mediux is searched only on request.
@@ -1321,6 +1336,12 @@ function renderSummary() {
   box.innerHTML = "";
   const parts = PARTS.filter(([k]) => setsData.type === "show" || k === "poster_set" || k === "background_set");
   const chosen = parts.filter(([k]) => staged[k]);
+  const dirty = pickDirty();
+  box.closest(".pickbar").classList.toggle("dirty", dirty);
+  const saved = PARTS.some(([k]) => (setsData.pick || {})[k]);
+  $("pickSave").textContent = !dirty && saved ? "Saved" : "Save picks";
+  $("pickSave").disabled = !dirty;
+  if (dirty) box.append(el("span", { class: "unsaved", text: "Not saved yet. " }));
   if (!chosen.length) { box.append("No picks: everything follows your creator priority" + (setsData.aura ? " and AURA." : ".")); return; }
   chosen.forEach(([k, label], i) => {
     if (i) box.append(" · ");
@@ -1458,7 +1479,7 @@ $("pickSave").onclick = async () => {
     }
     loadPicks();
   } catch (e) { say($("pickMsg"), e.message, false); }
-  finally { $("pickSave").disabled = false; }
+  finally { renderSummary(); }
 };
 
 let pickItems = [];
