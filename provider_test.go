@@ -569,17 +569,29 @@ func (f *fakePlex) server(t *testing.T) *httptest.Server {
 		case r.URL.Path == "/":
 			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"friendlyName": "Unlimited-Primary"}})
 		case r.URL.Path == "/library/sections":
+			// Like real Plex: a library's "agent" names only the Primary
+			// (Plex Series); the group says whether Mediux Artwork is in it.
 			f.mu.Lock()
-			agent := "tv.plex.agents.custom.abc123"
+			group := "7"
 			if f.switchedBack {
-				agent = "tv.plex.agents.series"
+				group = "2"
 			}
 			f.mu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Directory": []any{
-				map[string]any{"key": "1", "type": "show", "title": "zMediux TV", "agent": agent},
+				map[string]any{"key": "1", "type": "show", "title": "zMediux TV", "agent": "tv.plex.agents.series", "metadataAgentProviderGroupId": group},
 				map[string]any{"key": "2", "type": "artist", "title": "Music", "agent": "tv.plex.agents.music"},
 				// The same show in a library still on Plex Series: never touched.
-				map[string]any{"key": "3", "type": "show", "title": "TV Shows", "agent": "tv.plex.agents.series"}}}})
+				map[string]any{"key": "3", "type": "show", "title": "TV Shows", "agent": "tv.plex.agents.series", "metadataAgentProviderGroupId": 2}}}})
+		case r.URL.Path == "/media/providers/metadata":
+			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"MetadataAgentProvider": []any{
+				map[string]any{"id": "1", "identifier": "tv.plex.agents.series"},
+				map[string]any{"id": 9, "identifier": tvIdentifier}}}})
+		case r.URL.Path == "/media/providers/metadata/group":
+			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"MetadataAgentProviderGroup": []any{
+				map[string]any{"id": 2, "title": "Plex Series", "primaryIdentifier": "tv.plex.agents.series",
+					"MetadataAgentProviderGroupItem": []any{map[string]any{"metadataAgentProviderId": "1"}}},
+				map[string]any{"id": "7", "title": "Mediux Artwork (TV)", "primaryIdentifier": "tv.plex.agents.series",
+					"MetadataAgentProviderGroupItem": []any{map[string]any{"metadataAgentProviderId": "9"}, map[string]any{"metadataAgentProviderId": 1}}}}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/library/sections/3/all":
 			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Metadata": []any{
 				map[string]any{"ratingKey": "333", "guid": "plex://show/x", "Guid": []any{map[string]any{"id": "tmdb://194764"}}}}}})
@@ -1163,6 +1175,11 @@ func TestReviewModeOnlyApprovedTitlesGetArt(t *testing.T) {
 	ch := h.get(t, "/api/review/choices?keys=movie:291870")["choices"].(map[string]any)
 	if c := ch["movie:291870"].(map[string]any); c["creator"] != "willtong93" || !strings.Contains(c["poster"].(string), uuid(3)) {
 		t.Errorf("provider's choice: %v", c)
+	}
+	// For a show it covers every part: background, season posters, title cards.
+	sh := h.get(t, "/api/review/choices?keys=show:194764")["choices"].(map[string]any)["show:194764"].(map[string]any)
+	if sh["poster"] == nil || sh["background"] == nil || sh["seasons"] == nil || sh["cards"] == nil || sh["card"] == nil {
+		t.Errorf("a show's preview should show every part: %v", sh)
 	}
 
 	// Approving saves that choice as the pick, and Plex now gets it.

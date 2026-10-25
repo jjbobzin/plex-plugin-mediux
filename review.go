@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -52,11 +53,12 @@ func readReviewTitles(r *http.Request, extra any) ([]reviewTitle, error) {
 	return out, nil
 }
 
-// providerChoice is the set the creator rules pick for each part of a title.
-func (ui *webUI) providerChoice(ctx context.Context, t reviewTitle) (userPick, choice, error) {
+// providerChoice is what approving a title saves: any part you already
+// picked by hand, and the set the creator rules pick for every other part.
+func (ui *webUI) providerChoice(ctx context.Context, t reviewTitle) (userPick, bundle, error) {
 	b, err := ui.provider.mediux.artwork(ctx, t.Type, t.TMDB)
 	if err != nil {
-		return userPick{}, choice{}, err
+		return userPick{}, bundle{}, err
 	}
 	cfg := ui.settings.get()
 	p := userPick{Type: t.Type, TMDB: t.TMDB, Title: t.Title, Year: t.Year}
@@ -71,7 +73,77 @@ func (ui *webUI) providerChoice(ctx context.Context, t reviewTitle) (userPick, c
 		p.SeasonSet = chooseSet(b, cfg, kindSeason, "en").ID
 		p.CardSet = chooseSet(b, cfg, kindStill, "en").ID
 	}
-	return p, poster, nil
+	if old := ui.provider.picks.get(t.Type, t.TMDB); old != nil && !old.KeepPlex {
+		for _, part := range []struct {
+			dst *string
+			src string
+		}{
+			{&p.PosterSet, old.PosterSet}, {&p.BackSet, old.BackSet},
+			{&p.SeasonSet, old.SeasonSet}, {&p.CardSet, old.CardSet}} {
+			if part.src != "" {
+				*part.dst = part.src
+			}
+		}
+	}
+	return p, b, nil
+}
+
+// reviewPreview shows every part a pick gives Plex, for the review cards.
+type reviewPreview struct {
+	Poster     string     `json:"poster,omitempty"`
+	Creator    string     `json:"creator,omitempty"`
+	Background string     `json:"background,omitempty"`
+	Seasons    []setImage `json:"seasons,omitempty"`
+	Cards      int        `json:"cards,omitempty"` // episodes with a title card
+	Card       string     `json:"card,omitempty"`  // the first title card, as a sample
+}
+
+func reviewPreviewOf(b bundle, p userPick) reviewPreview {
+	var out reviewPreview
+	if a, ok := fromSet(b, p.PosterSet, kindPoster, 0, 0, "en"); ok {
+		out.Poster, out.Creator = thumbURL(a), a.Creator
+	}
+	if a, ok := fromSet(b, p.BackSet, kindBackdrop, 0, 0, "en"); ok {
+		out.Background = thumbURL(a)
+	}
+	for _, se := range slotsIn(b, p.SeasonSet, kindSeason) {
+		if a, ok := fromSet(b, p.SeasonSet, kindSeason, se[0], 0, "en"); ok {
+			out.Seasons = append(out.Seasons, setImage{Season: se[0], URL: thumbURL(a)})
+		}
+	}
+	cards := slotsIn(b, p.CardSet, kindStill)
+	out.Cards = len(cards)
+	if len(cards) > 0 {
+		if a, ok := fromSet(b, p.CardSet, kindStill, cards[0][0], cards[0][1], "en"); ok {
+			out.Card = thumbURL(a)
+		}
+	}
+	return out
+}
+
+// slotsIn lists the seasons (or season and episode pairs) a set has art of
+// one kind for, in order.
+func slotsIn(b bundle, setID, kind string) [][2]int {
+	if setID == "" {
+		return nil
+	}
+	seen := map[[2]int]bool{}
+	var out [][2]int
+	for _, s := range b.Sets {
+		if s.ID != setID {
+			continue
+		}
+		for _, a := range s.Art {
+			if k := [2]int{a.Season, a.Episode}; a.Kind == kind && !seen[k] {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i][0] < out[j][0] || out[i][0] == out[j][0] && out[i][1] < out[j][1]
+	})
+	return out
 }
 
 // approve saves the provider's current choice as the pick for each title,
@@ -95,19 +167,6 @@ func (ui *webUI) approve(w http.ResponseWriter, r *http.Request) {
 		if !choice.hasSets() {
 			nothing = append(nothing, t.Title)
 			continue
-		}
-		// Keep any part already picked by hand; fill in the rest.
-		if old := ui.provider.picks.get(t.Type, t.TMDB); old != nil && !old.KeepPlex {
-			for _, part := range []struct {
-				dst *string
-				src string
-			}{
-				{&choice.PosterSet, old.PosterSet}, {&choice.BackSet, old.BackSet},
-				{&choice.SeasonSet, old.SeasonSet}, {&choice.CardSet, old.CardSet}} {
-				if part.src != "" {
-					*part.dst = part.src
-				}
-			}
 		}
 		if err := ui.provider.picks.put(choice); err != nil {
 			ui.stopApproving(w, saved, 500, err)
@@ -197,8 +256,8 @@ func (ui *webUI) refreshLater(picks []userPick, what string) {
 	}()
 }
 
-// choices answers GET /api/review/choices?keys=movie:603,show:1413 with the
-// poster the provider would pick for each title.
+// choices answers GET /api/review/choices?keys=movie:603,show:1413 with
+// every part approving each title would give Plex.
 func (ui *webUI) choices(w http.ResponseWriter, r *http.Request) {
 	keys := strings.Split(r.URL.Query().Get("keys"), ",")
 	if len(keys) > 250 {
@@ -206,26 +265,18 @@ func (ui *webUI) choices(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
-	type result struct {
-		Poster  string `json:"poster,omitempty"`
-		Creator string `json:"creator,omitempty"`
-	}
-	out := map[string]result{}
+	out := map[string]reviewPreview{}
 	for _, k := range keys {
 		typ, id, _ := strings.Cut(k, ":")
 		t := reviewTitle{Type: mediaType(typ), TMDB: id}
 		if t.Type != typeMovie && t.Type != typeShow || !numericID(id) {
 			continue
 		}
-		_, poster, err := ui.providerChoice(ctx, t)
+		p, b, err := ui.providerChoice(ctx, t)
 		if err != nil {
 			break // Mediux trouble: send what we have
 		}
-		if poster.ok {
-			out[k] = result{imageURL(poster.art, "optimized"), poster.art.Creator}
-		} else {
-			out[k] = result{}
-		}
+		out[k] = reviewPreviewOf(b, p)
 	}
 	writeJSON(w, 200, map[string]any{"choices": out})
 }

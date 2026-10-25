@@ -209,6 +209,13 @@
   .revcard .top { display: flex; gap: 8px; align-items: flex-start; }
   .revcard .top input { width: 18px; height: 18px; accent-color: var(--accent); margin-top: 2px; flex: none; }
   .revcard .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .revcard .parts { display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+  .revcard .parts .wide { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .revcard .parts img { display: block; width: 100%; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: #08080b; }
+  .revcard .parts .wide img { aspect-ratio: 16 / 9; margin-bottom: 3px; }
+  .revcard .parts .seasons { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin-top: 3px; }
+  .revcard .parts .seasons img { aspect-ratio: 2 / 3; }
+  .revcard .parts .more { display: grid; place-items: center; border-radius: 6px; border: 1px dashed var(--line); aspect-ratio: 2 / 3; }
   .revcard .acts button { padding: 6px 10px; font-size: 13px; }
 
   .pills { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 4px; }
@@ -325,13 +332,13 @@
   <section class="tab" id="tab-sets" role="tabpanel">
     <div class="card">
       <h2>Pick a set</h2>
-      <p class="lead">Click a title in your library below, or search Mediux for any title. Choose a set separately for the poster, background, season posters and title cards. Your pick wins over AURA and creator priority; anything you don't pick follows the usual rules.</p>
+      <p class="lead">Type to narrow your library below, then click a title. For a title that isn't in your library, use Search Mediux. Choose a set separately for the poster, background, season posters and title cards. Your pick wins over AURA and creator priority; anything you don't pick follows the usual rules.</p>
       <div class="row search" id="setsSearch">
         <select id="setsType" style="width:auto" aria-label="Movie or TV show (for Mediux search)">
           <option value="show">TV show</option>
           <option value="movie">Movie</option>
         </select>
-        <input type="text" id="setsQ" placeholder="Start typing a title from your library, or a TMDB ID" autocomplete="off"
+        <input type="text" id="setsQ" placeholder="Search your library, or Mediux by title or TMDB ID" autocomplete="off"
           role="combobox" aria-expanded="false" aria-controls="setsSuggest">
         <button type="button" class="primary" id="setsBtn">Search Mediux</button>
         <div class="suggest" id="setsSuggest" role="listbox"></div>
@@ -360,7 +367,6 @@
       <div class="listhead">
         <div><h2>Your library</h2><p class="lead" style="margin:0" id="libStatus">Everything on your Plex servers.</p></div>
         <div class="listtools">
-          <input type="text" id="libSearch" placeholder="Search your library">
           <select id="libSort" aria-label="Sort">
             <option value="added">Date added</option>
             <option value="title">Title</option>
@@ -663,7 +669,7 @@ const el = (tag, props = {}, ...kids) => {
     else if (k.startsWith("on")) n[k] = v;
     else n.setAttribute(k, v);
   }
-  for (const k of kids) n.append(k);
+  for (const k of kids) if (k != null) n.append(k); // skip missing parts
   return n;
 };
 
@@ -1220,7 +1226,7 @@ async function findSets(type, q) {
   } catch (e) { say($("setsMsg"), e.message, false); }
 }
 // openTitle shows one title's sets, by its exact ID, with its name in the box.
-let libScrollY = 0;
+let libScrollY = 0, libQuery = ""; // libQuery: what you typed, which filters the grid
 function openTitle(t) {
   if ($("setsResult").hidden) libScrollY = window.scrollY; // only when leaving the grid
   $("setsType").value = t.type;
@@ -1232,10 +1238,11 @@ function openTitle(t) {
 function closeTitle() {
   setsData = null;
   $("setsResult").hidden = true; $("setsOthers").hidden = true;
-  say($("setsMsg"), ""); $("setsQ").value = "";
+  say($("setsMsg"), "");
 }
-$("closeTitle").onclick = closeTitle;
-$("backToLibrary").onclick = () => { closeTitle(); window.scrollTo({ top: libScrollY || $("libraryCard").offsetTop, behavior: "smooth" }); };
+// Close starts over; Back returns to the library as you left it.
+$("closeTitle").onclick = () => { closeTitle(); $("setsQ").value = libQuery = ""; renderLibrary(false); };
+$("backToLibrary").onclick = () => { closeTitle(); $("setsQ").value = libQuery; renderLibrary(true); window.scrollTo({ top: libScrollY || $("libraryCard").offsetTop, behavior: "smooth" }); };
 
 // Live search: matches come from the library already loaded in this page,
 // so typing never calls the server; Mediux is searched only on request.
@@ -1265,11 +1272,15 @@ function showTitleSuggest() {
   box.style.display = "block";
   $("setsQ").setAttribute("aria-expanded", "true");
 }
+// With no title open, the library grid right below is the list of matches;
+// with one open, the grid is out of view, so a dropdown shows them instead.
+const titleOpen = () => !$("setsResult").hidden;
 $("setsQ").addEventListener("input", () => {
   clearTimeout(suggestTimer);
   $("setsSuggest").innerHTML = ""; hideTitleSuggest(); // never act on matches for older text
-  if (!libData) libraryOnce().then(() => { if ($("setsQ").value.trim()) showTitleSuggest(); });
-  suggestTimer = setTimeout(showTitleSuggest, 120);
+  const typed = () => { libQuery = $("setsQ").value; if (titleOpen()) showTitleSuggest(); else renderLibrary(false); };
+  if (!libData) libraryOnce().then(() => { if ($("setsQ").value.trim()) typed(); });
+  suggestTimer = setTimeout(typed, 150);
 });
 $("setsQ").addEventListener("keydown", (e) => {
   const opts = [...$("setsSuggest").querySelectorAll("button")];
@@ -1280,6 +1291,16 @@ $("setsQ").addEventListener("keydown", (e) => {
     opts.forEach((o, i) => o.classList.toggle("active", i === suggestIndex));
   } else if (e.key === "Enter") {
     e.preventDefault();
+    if (!titleOpen()) { // open the first library match, else look on Mediux
+      clearTimeout(suggestTimer);
+      const typed = libQuery = $("setsQ").value;
+      libraryOnce().then(() => {
+        if ($("setsQ").value !== typed) return; // typed on while the library loaded
+        const first = titleMatches(normTitleJS(typed.trim()))[0];
+        if (first) openTitle(first); else $("setsBtn").click();
+      });
+      return;
+    }
     if (!opts.length && $("setsQ").value.trim()) { // typed faster than the list updated
       clearTimeout(suggestTimer); showTitleSuggest();
       const fresh = [...$("setsSuggest").querySelectorAll("button")];
@@ -1429,6 +1450,7 @@ $("pickSave").onclick = async () => {
     const body = Object.assign({ type: setsData.type, tmdb: setsData.tmdb, title: setsData.title || "", year: setsData.year || 0 }, staged);
     const res = await api("/api/picks", { method: "POST", body: JSON.stringify(body) });
     setsData.pick = Object.assign(emptyPick(), staged);
+    delete choiceCache[setsData.type + ":" + setsData.tmdb];
     say($("pickMsg"), res.status, true);
     if (libData) { // show the new state on the title's library card
       const it = libData.items.find((x) => x.type === setsData.type && String(x.tmdb) === String(setsData.tmdb));
@@ -1494,7 +1516,8 @@ async function reviewAction(path, items, extra, msgEl) {
   } catch (e) { say(msgEl, e.message, false); }
 }
 
-// reviewCard shows Plex's poster next to the provider's choice.
+// reviewCard shows Plex's poster next to the provider's choice, and the other
+// parts Approve would save.
 function reviewCard(it) {
   const key = libKey(it);
   const box = el("div", { class: "revcard" + (libSelectedKeys.has(key) ? " sel" : ""), "data-key": key });
@@ -1506,9 +1529,11 @@ function reviewCard(it) {
   const mine = el("div", { class: "art", text: "Loading…" });
   const mineCap = el("figcaption", { text: "Provider's choice" });
   const msg = el("p", { class: "msg" });
+  const parts = el("div", { class: "parts", text: "" });
   box.append(
     el("div", { class: "top" }, cb, el("div", {}, el("div", { class: "t", style: "font-weight:600", text: it.title }), el("div", { class: "hint", style: "margin:0", text: meta }))),
     el("div", { class: "pair" }, el("figure", {}, now, el("figcaption", { text: "In Plex now" })), el("figure", { class: "mine" }, mine, mineCap)),
+    parts,
     el("div", { class: "acts" },
       el("button", { type: "button", class: "primary", text: "Approve", onclick: () => reviewAction("/api/review/approve", [reviewTitle(it)], null, msg) }),
       el("button", { type: "button", text: "Choose another", onclick: () => openTitle(it) }),
@@ -1536,12 +1561,35 @@ function paintChoices() {
   for (const card of document.querySelectorAll(".revcard")) {
     const c = choiceCache[card.dataset.key];
     const fig = card.querySelector("figure.mine");
-    if (!c || fig.querySelector("img")) continue;
+    if (!c || fig.querySelector("img") || card.dataset.painted) continue;
+    card.dataset.painted = "1";
     const art = fig.firstChild;
     if (c.poster) art.replaceWith(el("img", { src: c.poster, alt: "Provider's choice", loading: "lazy" }));
     else art.textContent = "Nothing your settings allow";
     fig.lastChild.textContent = c.creator ? "Provider's choice · " + c.creator : "Provider's choice";
+    card.querySelector(".parts").replaceWith(choiceParts(c, card.dataset.key.startsWith("show:")));
   }
+}
+// choiceParts shows the rest of what Approve gives Plex: the background and,
+// for shows, the season posters and title cards.
+function choiceParts(c, show) {
+  const box = el("div", { class: "parts" });
+  if (!c.poster && !c.background && !c.seasons && !c.cards) return box;
+  const img = (src, alt) => el("img", { src, alt, loading: "lazy" });
+  const wide = el("div", { class: "wide" });
+  wide.append(el("div", {}, c.background ? img(c.background, "Background") : null, c.background ? "Background" : "No background"));
+  if (show) wide.append(el("div", {}, c.card ? img(c.card, "Title card") : null,
+    c.cards ? "Title cards: " + plural(c.cards, "episode", "episodes") : "No title cards"));
+  box.append(wide);
+  if (show) {
+    const seasons = c.seasons || [];
+    const strip = el("div", { class: "seasons" });
+    const room = seasons.length > 6 ? 5 : 6;
+    for (const s of seasons.slice(0, room)) strip.append(img(s.url, "Season " + s.season));
+    if (seasons.length > room) strip.append(el("div", { class: "more", text: "+" + (seasons.length - room) }));
+    box.append(el("div", {}, seasons.length ? "Season posters: " + plural(seasons.length, "season", "seasons") : "No season posters", seasons.length ? strip : null));
+  }
+  return box;
 }
 
 const libPager = makePager("library", $("libGrid"), 1, (it) => {
@@ -1560,7 +1608,14 @@ const libPager = makePager("library", $("libGrid"), 1, (it) => {
   const meta = [it.year, libLibrariesOf(it).join(", ")].filter(Boolean).join(" · ");
   return el("button", { type: "button", class: "libcard", title: it.places.map((p) => p.server + " · " + p.library).join("\n"),
     onclick: () => openTitle(it) }, art, el("div", { class: "body" }, el("div", { class: "t", text: it.title }), el("div", { class: "m", text: meta }), badges));
-}, () => (libData && libData.items.length ? (reviewMode() ? "Nothing left to review here." : "No titles match these filters.") : "Nothing loaded yet."), fillChoices);
+}, libEmptyText, fillChoices);
+function libEmptyText() {
+  if (!libData || !libData.items.length) return "Nothing loaded yet.";
+  const q = libQuery.trim();
+  if (q && !titleMatches(normTitleJS(q)).length) return "Nothing in your library matches “" + q + "”. Search Mediux to look it up anyway.";
+  if (q) return "“" + q + "” is in your library, but not with these filters. Reset filters to see it.";
+  return reviewMode() ? "Nothing left to review here." : "No titles match these filters.";
+}
 
 // libraryOnce loads the library if it isn't loaded, sharing one request.
 let libLoading = null;
@@ -1622,7 +1677,7 @@ function renderLibrary(keepPage) {
       renderLibrary(false);
     } }, lib, el("span", { class: "count", text: String(counts[lib]) })));
   }
-  const q = normTitleJS($("libSearch").value), art = $("libArt").value, pick = $("libPick").value, agent = $("libAgent").value;
+  const q = normTitleJS(libQuery), art = $("libArt").value, pick = $("libPick").value, agent = $("libAgent").value;
   let items = libData.items.filter((it) => {
     if (libSelected.size && !libLibrariesOf(it).some((l) => libSelected.has(l))) return false;
     if (q && !it._n.includes(q)) return false;
@@ -1678,13 +1733,12 @@ for (const id of ["libArt", "libPick", "libAgent", "libSort"]) {
   try { const v = recall("lib:" + id); if (v !== null) $(id).value = v; } catch (_) {}
   $(id).onchange = () => { remember("lib:" + id, $(id).value); renderLibrary(false); };
 }
-let libSearchTimer;
-$("libSearch").addEventListener("input", () => { clearTimeout(libSearchTimer); libSearchTimer = setTimeout(() => renderLibrary(false), 150); });
 $("libRefresh").onclick = () => loadLibrary(true);
 $("libReset").onclick = () => {
   libSelected.clear(); remember("libLibraries", "[]");
   for (const id of ["libArt", "libPick", "libAgent"]) { $(id).value = ""; remember("lib:" + id, ""); }
-  $("libSearch").value = "";
+  libQuery = "";
+  if ($("setsResult").hidden) $("setsQ").value = "";
   renderLibrary(false);
 };
 

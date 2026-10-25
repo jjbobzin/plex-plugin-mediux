@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -22,7 +23,7 @@ type plexRef struct {
 	Key     string // ratingKey
 	Section string // library section ID
 	Library string // library name
-	Custom  bool   // library uses a custom agent (one that can include Mediux Artwork)
+	Custom  bool   // library's agent includes Mediux Artwork
 	// For the Library view.
 	Title   string
 	Year    int
@@ -106,21 +107,16 @@ func (pc *plexClient) index(ctx context.Context, srv plexServer, maxAge time.Dur
 	if idx != nil && time.Since(idx.built) < maxAge {
 		return idx, nil
 	}
-	var sections struct {
-		MediaContainer struct {
-			Directory []struct {
-				Key   string `json:"key"`
-				Type  string `json:"type"`
-				Title string `json:"title"`
-				Agent string `json:"agent"`
-			} `json:"Directory"`
-		} `json:"MediaContainer"`
-	}
-	if err := pc.do(ctx, srv, http.MethodGet, "/library/sections", &sections); err != nil {
+	sections, err := pc.sections(ctx, srv)
+	if err != nil {
 		return nil, err
 	}
 	built := &plexIndex{built: time.Now(), items: map[string][]plexRef{}}
-	for _, d := range sections.MediaContainer.Directory {
+	for _, d := range sections {
+		if d.Type == "movie" || d.Type == "show" {
+			log.Printf("Plex %s: library %q uses agent %s, agent group %q: %s", srv.Name, d.Title, d.Agent, d.Group,
+				map[bool]string{true: "includes Mediux Artwork", false: "no Mediux Artwork"}[d.Mediux])
+		}
 		kind := map[string]mediaType{"movie": typeMovie, "show": typeShow}[d.Type]
 		if kind == "" {
 			continue
@@ -145,7 +141,7 @@ func (pc *plexClient) index(ctx context.Context, srv plexServer, maxAge time.Dur
 			if json.Unmarshal(m["ratingKey"], &ratingKey) != nil || json.Unmarshal(m["Guid"], &guids) != nil {
 				continue
 			}
-			ref := plexRef{Key: ratingKey, Section: d.Key, Library: d.Title, Custom: !builtInAgent(d.Agent), Type: kind}
+			ref := plexRef{Key: ratingKey, Section: d.Key, Library: d.Title, Custom: d.Mediux, Type: kind}
 			_ = json.Unmarshal(m["title"], &ref.Title)
 			_ = json.Unmarshal(m["year"], &ref.Year)
 			_ = json.Unmarshal(m["thumb"], &ref.Thumb)
@@ -211,17 +207,17 @@ func (pc *plexClient) refresh(ctx context.Context, servers []plexServer, typ med
 				refs = idx.items[string(typ)+":"+tmdb]
 			}
 		}
-		var live map[string]bool // library agents read just now, for unlocking
-		if replaceLocked && len(refs) > 0 {
+		var live map[string]bool // library agents read just now
+		if len(refs) > 0 {
 			if live, err = pc.customSections(ctx, srv); err != nil {
 				errs = append(errs, err)
 				continue
 			}
 		}
 		for _, ref := range refs {
-			// The index can be hours old; before unlocking, trust only the
-			// library's agent as Plex reports it right now.
-			if !ref.Custom || replaceLocked && !live[ref.Section] {
+			// The index can be hours old (you may have switched a library
+			// since), so trust only the agent as Plex reports it right now.
+			if !live[ref.Section] {
 				res.Skipped = append(res.Skipped, ref.Library+" on "+srv.Name)
 				continue
 			}
@@ -241,24 +237,113 @@ func (pc *plexClient) refresh(ctx context.Context, servers []plexServer, typ med
 	return res, errors.Join(errs...)
 }
 
-// customSections reads which libraries use a custom agent right now.
+// customSections reads which libraries use an agent with Mediux Artwork in
+// it right now.
 func (pc *plexClient) customSections(ctx context.Context, srv plexServer) (map[string]bool, error) {
-	var sections struct {
-		MediaContainer struct {
-			Directory []struct {
-				Key   string `json:"key"`
-				Agent string `json:"agent"`
-			} `json:"Directory"`
-		} `json:"MediaContainer"`
-	}
-	if err := pc.do(ctx, srv, http.MethodGet, "/library/sections", &sections); err != nil {
+	sections, err := pc.sections(ctx, srv)
+	if err != nil {
 		return nil, err
 	}
 	out := map[string]bool{}
-	for _, d := range sections.MediaContainer.Directory {
-		out[d.Key] = !builtInAgent(d.Agent)
+	for _, d := range sections {
+		out[d.Key] = d.Mediux
 	}
 	return out, nil
+}
+
+// plexSection is one library and whether its agent includes this provider.
+type plexSection struct {
+	Key, Type, Title, Agent string
+	Group                   string // the agent's provider group, when Plex says
+	Mediux                  bool
+}
+
+// sections reads a server's libraries. A library's "agent" field names only
+// its agent's Primary (Plex Series, say), so an agent you built in Plex from
+// Plex Series plus Mediux Artwork looks just like plain Plex Series there.
+// The agent itself is a provider group, so the groups are read too.
+func (pc *plexClient) sections(ctx context.Context, srv plexServer) ([]plexSection, error) {
+	var raw struct {
+		MediaContainer struct {
+			Directory []map[string]json.RawMessage `json:"Directory"`
+		} `json:"MediaContainer"`
+	}
+	if err := pc.do(ctx, srv, http.MethodGet, "/library/sections", &raw); err != nil {
+		return nil, err
+	}
+	groups := pc.mediuxGroups(ctx, srv)
+	out := make([]plexSection, 0, len(raw.MediaContainer.Directory))
+	for _, d := range raw.MediaContainer.Directory {
+		s := plexSection{Key: rawString(d["key"]), Type: rawString(d["type"]), Title: rawString(d["title"]),
+			Agent: rawString(d["agent"]), Group: rawString(d["metadataAgentProviderGroupId"])}
+		if has, ok := groups[s.Group]; ok && s.Group != "" {
+			s.Mediux = has
+		} else {
+			// No group to go by: a custom Primary can only be a provider
+			// group someone built, so count it as one with Mediux.
+			s.Mediux = !builtInAgent(s.Agent)
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func ourProvider(identifier string) bool {
+	return identifier == movieIdentifier || identifier == tvIdentifier
+}
+
+// mediuxGroups maps each of the server's agents (provider groups) to whether
+// it includes Mediux Artwork. It's nil when Plex can't list them.
+func (pc *plexClient) mediuxGroups(ctx context.Context, srv plexServer) map[string]bool {
+	var providers struct {
+		MediaContainer struct {
+			MetadataAgentProvider []map[string]json.RawMessage `json:"MetadataAgentProvider"`
+		} `json:"MediaContainer"`
+	}
+	var groups struct {
+		MediaContainer struct {
+			MetadataAgentProviderGroup []map[string]json.RawMessage `json:"MetadataAgentProviderGroup"`
+		} `json:"MediaContainer"`
+	}
+	if err := pc.do(ctx, srv, http.MethodGet, "/media/providers/metadata", &providers); err != nil {
+		return nil
+	}
+	if err := pc.do(ctx, srv, http.MethodGet, "/media/providers/metadata/group", &groups); err != nil {
+		return nil
+	}
+	ours := map[string]bool{}
+	for _, p := range providers.MediaContainer.MetadataAgentProvider {
+		if ourProvider(rawString(p["identifier"])) {
+			ours[rawString(p["id"])] = true
+		}
+	}
+	out := map[string]bool{}
+	for _, g := range groups.MediaContainer.MetadataAgentProviderGroup {
+		has := ourProvider(rawString(g["primaryIdentifier"]))
+		// Plex's documentation uses both names for the list of providers.
+		for _, field := range []string{"MetadataAgentProviderGroupItem", "MetadataAgentGroupItem"} {
+			var items []map[string]json.RawMessage
+			_ = json.Unmarshal(g[field], &items)
+			for _, it := range items {
+				has = has || ours[rawString(it["metadataAgentProviderId"])]
+			}
+		}
+		out[rawString(g["id"])] = has
+	}
+	return out
+}
+
+// rawString reads a JSON string or number as text: Plex sends IDs as either.
+func rawString(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var n json.Number
+	if json.Unmarshal(raw, &n) == nil {
+		return n.String()
+	}
+	return ""
 }
 
 // Plex's numeric item types for library edits.
@@ -371,6 +456,12 @@ func (pc *plexClient) current(ctx context.Context, servers []plexServer, typ med
 			continue
 		}
 		refs := append([]plexRef(nil), idx.items[string(typ)+":"+tmdb]...)
+		// The index can be hours old: go by each library's agent right now.
+		if live, err := pc.customSections(ctx, srv); err == nil {
+			for i := range refs {
+				refs[i].Custom = live[refs[i].Section]
+			}
+		}
 		// Every library holding the title, Mediux-agent libraries first.
 		sort.SliceStable(refs, func(a, b int) bool { return refs[a].Custom && !refs[b].Custom })
 		for _, ref := range refs {
