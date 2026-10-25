@@ -170,6 +170,8 @@
   .plexnow img.p { width: 110px; } .plexnow img.b { width: 230px; }
   .badge.warn { background: rgba(245,181,68,.13); color: var(--warn); }
   .collection { margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+  .notice { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: rgba(245,181,68,.10); border: 1px solid rgba(245,181,68,.45); color: #f3d98a; font-size: 14px; }
+  .notice b { color: #fbe7b0; }
   .collection ul { margin: 6px 0 10px; padding-left: 18px; color: var(--muted); font-size: 13.5px; }
   .strip.movies img { width: 96px; }
   .strip.movies figure.current > :first-child { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -308,6 +310,7 @@
       <p class="msg" id="setsMsg" role="status"></p>
       <div class="others" id="setsOthers" hidden></div>
       <div id="setsResult" hidden>
+        <div class="notice" id="agentWarn" hidden></div>
         <div class="plexnow" id="plexNow"></div>
         <div class="pickbar">
           <div class="summary" id="pickSummary"></div>
@@ -1089,6 +1092,7 @@ function renderOthers(type) {
 // loadPlexNow shows what each Plex server displays for this title right now.
 async function loadPlexNow() {
   const box = $("plexNow"), want = setsData.tmdb;
+  $("agentWarn").hidden = true;
   box.innerHTML = "";
   box.append(el("h3", { text: "In Plex now" }), el("p", { class: "hint", text: "Checking your Plex servers…" }));
   let d;
@@ -1099,6 +1103,16 @@ async function loadPlexNow() {
   box.append(el("h3", { text: "In Plex now" }));
   if (!d.configured) { box.append(el("p", { class: "hint", text: "Add your Plex servers on the Watch & notify tab to see what Plex shows for this title." })); return; }
   if (!d.servers.length) { box.append(el("p", { class: "hint", text: "This title isn't in your Plex libraries." })); return; }
+  // Say plainly when no library holding the title asks this provider.
+  if (!d.servers.some((x) => x.custom)) {
+    const where = d.servers.filter((x) => x.library).map((x) => x.library + " on " + x.server).join(" and ");
+    const warn = $("agentWarn");
+    warn.textContent = "";
+    warn.append(el("b", { text: "Plex isn't using these picks yet. " }),
+      (setsData.title || "This title") + " is only in " + where + ", which " + (d.servers.length > 1 ? "aren't" : "isn't") +
+      " on a Mediux agent, so Plex never asks this provider for its artwork. Picks are saved and apply once the title is in a library on a Mediux agent (like your zMediux test libraries).");
+    warn.hidden = false;
+  }
   for (const srv of d.servers) {
     const head = el("div", { class: "head" }, el("b", { text: srv.server + (srv.library ? " · " + srv.library : "") }));
     if (srv.error) { box.append(el("div", { class: "srv" }, head, el("p", { class: "msg err", text: srv.error }))); continue; }
@@ -1165,7 +1179,7 @@ function renderSets() {
     if (set.favorite) head.append(el("span", { class: "badge fav", text: "Favorite #" + set.favorite }));
     if (set.excluded) head.append(el("span", { class: "badge excl", text: "Excluded" }));
     const autoParts = PARTS.filter(([k]) => auto[k] === set.id).map(([, l]) => l.toLowerCase());
-    if (autoParts.length) head.append(el("span", { class: "badge auto", text: "Used now for " + autoParts.join(", ") }));
+    if (autoParts.length) head.append(el("span", { class: "badge auto", title: "What this provider hands Plex for this title when Plex asks (only libraries on a Mediux agent ask).", text: "Provider's choice: " + autoParts.join(", ") }));
     if (setsData.type === "show") head.append(el("span", { class: "badge", text: plural(set.seasons.length, "season poster", "season posters") + " · " + plural(set.card_count, "title card", "title cards") }));
     if (set.collection) head.append(el("span", { class: "badge", text: "Collection: " + set.collection }));
 
