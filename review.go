@@ -227,6 +227,53 @@ func (ui *webUI) keepPlex(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"status": verb + plural(len(changed), "title", "titles") + "."})
 }
 
+// ignoreAura leaves AURA's pick out for titles (or, with ignore false, uses
+// it again). Ignoring lasts until the pick is changed in AURA.
+func (ui *webUI) ignoreAura(w http.ResponseWriter, r *http.Request) {
+	var flag struct {
+		Ignore bool `json:"ignore"`
+	}
+	titles, err := readReviewTitles(r, &flag)
+	if err != nil || len(titles) == 0 {
+		writeJSON(w, 400, map[string]string{"error": "choose at least one title"})
+		return
+	}
+	var changed []userPick
+	for _, t := range titles {
+		pin := ui.provider.aura.pin(t.Type, t.TMDB)
+		if pin == nil {
+			continue
+		}
+		p := userPick{Type: t.Type, TMDB: t.TMDB, Title: t.Title, Year: t.Year}
+		if old := ui.provider.picks.get(t.Type, t.TMDB); old != nil {
+			p = *old
+		}
+		p.AuraIgnored = ""
+		if flag.Ignore {
+			p.AuraIgnored = pin.signature()
+		}
+		if err := ui.provider.picks.put(p); err != nil {
+			writeJSON(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		changed = append(changed, p)
+	}
+	if len(changed) == 0 {
+		writeJSON(w, 400, map[string]string{"error": "AURA has no pick for that title"})
+		return
+	}
+	verb := "Ignoring AURA's pick"
+	if !flag.Ignore {
+		verb = "Using AURA's pick again"
+	}
+	ui.refreshLater(changed, verb)
+	status := verb + " for " + plural(len(changed), "title", "titles") + "."
+	if flag.Ignore && ui.settings.get().ApplyMode == "approved" {
+		status += " Titles without a pick of your own go back to review."
+	}
+	writeJSON(w, 200, map[string]string{"status": status})
+}
+
 func (ui *webUI) canRefresh() bool {
 	cfg := ui.settings.get()
 	return cfg.RefreshPlex && hasPlexToken(cfg.PlexServers)

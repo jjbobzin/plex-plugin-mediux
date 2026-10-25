@@ -42,7 +42,7 @@ keeps using the local `http://<server-ip>:38600/...` addresses either way.
 
 ## What else it does
 
-- **Pick sets yourself.** The **Sets** tab shows every Mediux set for a movie
+- **Pick sets yourself.** The **Library** tab shows every Mediux set for a movie
   or show side by side. Pick a set separately for the poster, background,
   season posters and title cards; the pick wins over AURA and creator
   priority. Saving asks your Plex servers to refresh the title, and an option
@@ -50,8 +50,12 @@ keeps using the local `http://<server-ip>:38600/...` addresses either way.
 - **AURA picks.** If you choose sets in [AURA](https://github.com/mediux-team/AURA),
   share AURA's data folder with the container (the commented line in the
   compose file) and the provider uses your saved sets ahead of creator
-  priority (but after picks made on the Sets tab), on every Plex server. It
-  only reads AURA's database.
+  priority (but after picks made on the Library tab), on every Plex server. It
+  only reads AURA's database. Keep picking in AURA, here, or both: titles you
+  haven't picked in AURA get their art from this provider. To leave out one of
+  AURA's picks without going back to AURA, open the title and choose
+  **Ignore AURA's pick**; if you later change that pick in AURA, the new one
+  applies.
 - **Watch for new artwork.** Plex only asks for artwork when a title is added
   or refreshed. The provider re-checks Mediux on a schedule for titles Plex has
   asked about. When something new appears, such as a title card uploaded after

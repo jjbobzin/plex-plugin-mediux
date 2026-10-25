@@ -146,7 +146,7 @@ func (ui *webUI) sets(w http.ResponseWriter, r *http.Request) {
 	title, year := ui.provider.mediux.titleOf(ctx, kind, tmdb)
 	// What Plex gets today without a page pick: AURA's pick if there is one,
 	// else the rules.
-	cur := override{aura: ui.provider.aura.pin(kind, tmdb)}
+	cur := override{aura: ui.provider.auraFor(kind, tmdb)}
 	auto := pickParts{}
 	poster := choosePoster(b, cfg, "en", cur)
 	if poster.ok {
@@ -174,8 +174,10 @@ func (ui *webUI) sets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"type": kind, "tmdb": tmdb, "how": how, "title": title, "year": year,
 		"sets": setsFor(b, cfg), "auto": auto, "pick": picked,
-		"aura":   ui.provider.aura.pin(kind, tmdb) != nil,
-		"others": ui.otherMatches(ctx, kind, r.URL.Query().Get("q"), tmdb),
+		"aura": cur.aura != nil,
+		// AURA has a pick you chose to ignore here.
+		"aura_ignored": cur.aura == nil && ui.provider.aura.pin(kind, tmdb) != nil,
+		"others":       ui.otherMatches(ctx, kind, r.URL.Query().Get("q"), tmdb),
 	})
 }
 
@@ -228,6 +230,9 @@ func (ui *webUI) savePick(w http.ResponseWriter, r *http.Request) {
 	}
 	p := userPick{Type: in.Type, TMDB: in.TMDB, Title: strings.TrimSpace(in.Title), Year: in.Year,
 		PosterSet: in.Poster, BackSet: in.Background, SeasonSet: in.Season, CardSet: in.Card}
+	if old := ui.provider.picks.get(in.Type, in.TMDB); old != nil {
+		p.AuraIgnored = old.AuraIgnored // set on its own, not by picking sets
+	}
 	if len(p.Title) > 200 {
 		p.Title = p.Title[:200]
 	}

@@ -177,6 +177,8 @@
   .collection { margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
   .notice { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: rgba(245,181,68,.10); border: 1px solid rgba(245,181,68,.45); color: #f3d98a; font-size: 14px; }
   .notice b { color: #fbe7b0; }
+  .notice.info { background: var(--surface-2); border-color: var(--line); color: var(--muted); }
+  .notice button { margin-left: 6px; padding: 5px 10px; font-size: 13px; }
   .collection ul { margin: 6px 0 10px; padding-left: 18px; color: var(--muted); font-size: 13.5px; }
   .strip.movies img { width: 96px; }
   .strip.movies figure.current > :first-child { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -354,6 +356,7 @@
           <button type="button" class="ghost" id="closeTitle">Close</button>
         </div>
         <div class="notice" id="agentWarn" hidden></div>
+        <div class="notice info" id="auraNote" hidden></div>
         <div class="plexnow" id="plexNow"></div>
         <div class="pickbar">
           <div class="summary" id="pickSummary"></div>
@@ -387,7 +390,7 @@
         </select></label>
         <label>Picks <select id="libPick">
           <option value="">Any</option><option value="review">To review</option><option value="approved">Approved</option>
-          <option value="mine">Your picks</option><option value="aura">AURA picks</option><option value="keep">Kept Plex art</option><option value="nopick">No pick</option>
+          <option value="mine">Your picks</option><option value="aura">AURA picks</option><option value="auraoff">AURA picks you ignore</option><option value="keep">Kept Plex art</option><option value="nopick">No pick</option>
         </select></label>
         <label>Agent <select id="libAgent">
           <option value="">Any</option><option value="on">On a Mediux agent</option><option value="off">Not on a Mediux agent</option>
@@ -1232,9 +1235,9 @@ async function findSets(type, q) {
     const name = (setsData.title || q) + (setsData.year ? " (" + setsData.year + ")" : "");
     renderOthers(type);
     if (!setsData.sets.length) { say($("setsMsg"), name + ": Mediux has no sets for this title yet."); return; }
-    say($("setsMsg"), name + ": " + plural(setsData.sets.length, "set", "sets") + " on Mediux." +
-      (setsData.aura ? " AURA also has a pick for this title; a pick here wins." : ""), true);
+    say($("setsMsg"), name + ": " + plural(setsData.sets.length, "set", "sets") + " on Mediux.", true);
     renderSets();
+    renderAuraNote();
     $("setsResult").hidden = false;
     loadPlexNow();
   } catch (e) { say($("setsMsg"), e.message, false); }
@@ -1249,6 +1252,30 @@ function openTitle(t) {
   hideTitleSuggest();
   findSets(t.type, t.tmdb);
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+// renderAuraNote says whether AURA's pick for this title is used, and lets
+// you leave it out (or bring it back) without going to AURA.
+function renderAuraNote() {
+  const note = $("auraNote");
+  note.textContent = "";
+  note.hidden = !setsData || !(setsData.aura || setsData.aura_ignored);
+  if (note.hidden) return;
+  const ignore = !!setsData.aura;
+  note.append(ignore
+    ? "AURA has a pick for this title. Plex gets it for every part you don't pick here. "
+    : "You're ignoring AURA's pick for this title. If you change the pick in AURA, the new one applies. ",
+    el("button", { type: "button", text: ignore ? "Ignore AURA's pick" : "Use AURA's pick again", onclick: async (e) => {
+      e.target.disabled = true;
+      const t = { type: setsData.type, tmdb: String(setsData.tmdb), title: setsData.title || "", year: setsData.year || 0 };
+      try {
+        const res = await api("/api/review/ignore-aura", { method: "POST", body: JSON.stringify({ ignore, items: [t] }) });
+        libData = null; // badges and review state changed
+        if (pickDirty()) { setsData.aura = !ignore; setsData.aura_ignored = ignore; renderAuraNote(); }
+        else await findSets(t.type, t.tmdb); // the provider's choice changes too
+        say($("pickMsg"), res.status, true);
+        libraryOnce();
+      } catch (err) { say($("pickMsg"), err.message, false); e.target.disabled = false; }
+    } }));
 }
 function closeTitle() {
   setsData = null;
@@ -1621,6 +1648,7 @@ const libPager = makePager("library", $("libGrid"), 1, (it) => {
   if (it.keep_plex) badges.append(el("span", { class: "badge", text: "Keeps Plex art" }));
   if (it.pick) badges.append(el("span", { class: "badge fav", text: "Your pick" }));
   if (it.aura) badges.append(el("span", { class: "badge", text: "AURA pick" }));
+  if (it.aura_ignored) badges.append(el("span", { class: "badge", text: "AURA ignored" }));
   if (needsReview(it) && libData.apply_mode === "approved") badges.append(el("span", { class: "badge warn", text: "To review" }));
   if (it.art == null) badges.append(el("span", { class: "badge", text: (libData.availability || {}).running ? "Checking Mediux…" : "Not checked yet" }));
   else if (it.art === 0) badges.append(el("span", { class: "badge", text: "No Mediux art" }));
@@ -1709,6 +1737,7 @@ function renderLibrary(keepPage) {
     if (pick === "approved" && !isApproved(it)) return false;
     if (pick === "mine" && !it.pick) return false;
     if (pick === "aura" && !it.aura) return false;
+    if (pick === "auraoff" && !it.aura_ignored) return false;
     if (pick === "keep" && !it.keep_plex) return false;
     if (pick === "nopick" && (it.pick || it.aura || it.keep_plex)) return false;
     const on = it.places.some((p) => p.custom);

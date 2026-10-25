@@ -58,7 +58,7 @@ func (p *plexProvider) gate(typ mediaType, tmdb string) string {
 	if p.settings.get().ApplyMode == "all" {
 		return ""
 	}
-	if pick != nil && pick.hasSets() || p.aura.pin(typ, tmdb) != nil {
+	if pick != nil && pick.hasSets() || p.auraFor(typ, tmdb) != nil {
 		return ""
 	}
 	return reasonReview
@@ -66,7 +66,19 @@ func (p *plexProvider) gate(typ mediaType, tmdb string) string {
 
 // overrides gathers the settings-page pick and the AURA pick for a title.
 func (p *plexProvider) overrides(typ mediaType, tmdb string) override {
-	return override{pick: p.picks.get(typ, tmdb), aura: p.aura.pin(typ, tmdb)}
+	return override{pick: p.picks.get(typ, tmdb), aura: p.auraFor(typ, tmdb)}
+}
+
+// auraFor is the title's AURA pick, unless you chose to ignore that pick here.
+func (p *plexProvider) auraFor(typ mediaType, tmdb string) *auraPin {
+	pin := p.aura.pin(typ, tmdb)
+	if pin == nil {
+		return nil
+	}
+	if pick := p.picks.get(typ, tmdb); pick != nil && pick.AuraIgnored == pin.signature() {
+		return nil
+	}
+	return pin
 }
 
 type plexRequest struct {

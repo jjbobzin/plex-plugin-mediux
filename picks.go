@@ -30,11 +30,14 @@ type userPick struct {
 	SeasonSet string    `json:"season_set,omitempty"`
 	CardSet   string    `json:"titlecard_set,omitempty"`
 	KeepPlex  bool      `json:"keep_plex,omitempty"` // never give this title Mediux art
-	Updated   time.Time `json:"updated"`
+	// AuraIgnored holds the signature of an AURA pick to leave out for this
+	// title. A different pick made later in AURA applies again.
+	AuraIgnored string    `json:"aura_ignored,omitempty"`
+	Updated     time.Time `json:"updated"`
 }
 
 func (u userPick) empty() bool {
-	return !u.KeepPlex && !u.hasSets()
+	return !u.KeepPlex && !u.hasSets() && u.AuraIgnored == ""
 }
 
 func (u userPick) hasSets() bool {

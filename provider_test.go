@@ -1155,6 +1155,29 @@ func TestReviewModeOnlyApprovedTitlesGetArt(t *testing.T) {
 	if m := metadata(t, ha.get(t, "/movies/library/metadata/tmdb-291870"))[0]; m["thumb"] == nil {
 		t.Errorf("an AURA-picked title is approved: %v", m)
 	}
+	// Ignoring AURA's pick here sends the title back to review...
+	dg := []any{map[string]any{"type": "movie", "tmdb": "291870", "title": "Dirty Grandpa"}}
+	postJSON(t, ha, "/api/review/ignore-aura", map[string]any{"ignore": true, "items": dg})
+	if m := metadata(t, ha.get(t, "/movies/library/metadata/tmdb-291870"))[0]; m["thumb"] != nil {
+		t.Errorf("an ignored AURA pick must not apply: %v", m)
+	}
+	if sets := ha.get(t, "/api/sets?type=movie&q=291870"); sets["aura"] != false || sets["aura_ignored"] != true {
+		t.Errorf("the picker should say AURA's pick is ignored: aura=%v ignored=%v", sets["aura"], sets["aura_ignored"])
+	}
+	// ...and saving sets for the title later keeps it ignored.
+	savePick(t, ha, map[string]any{"type": "movie", "tmdb": "291870", "title": "Dirty Grandpa", "background_set": "set-b"})
+	if p := ha.app.provider.picks.get(typeMovie, "291870"); p == nil || p.AuraIgnored == "" {
+		t.Errorf("saving a pick dropped the AURA ignore: %+v", p)
+	}
+	savePick(t, ha, map[string]any{"type": "movie", "tmdb": "291870", "title": "Dirty Grandpa"})
+	// Using it again brings AURA's pick back.
+	postJSON(t, ha, "/api/review/ignore-aura", map[string]any{"ignore": false, "items": dg})
+	if m := metadata(t, ha.get(t, "/movies/library/metadata/tmdb-291870"))[0]; m["thumb"] == nil {
+		t.Errorf("AURA's pick should apply again: %v", m)
+	}
+	if p := ha.app.provider.picks.get(typeMovie, "291870"); p != nil {
+		t.Errorf("nothing left to remember for the title: %+v", p)
+	}
 
 	h := newHarness(t, func(s *settings) { s.ApplyMode = "approved" })
 

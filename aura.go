@@ -6,7 +6,9 @@ package main
 // to choose a specific set and every Plex server follows it.
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"sort"
@@ -96,6 +98,13 @@ func (a *auraStore) refresh(force bool) {
 			a.status.Shows++
 		}
 	}
+}
+
+// signature identifies one AURA pick exactly, so ignoring it lasts only until
+// the pick is changed in AURA.
+func (p *auraPin) signature() string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%v|%v", p.Poster, p.Backdrop, p.Seasons, p.Cards)))
+	return hex.EncodeToString(h[:])[:16]
 }
 
 func (a *auraStore) pin(typ mediaType, tmdb string) *auraPin {

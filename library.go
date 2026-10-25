@@ -36,7 +36,9 @@ type libraryItem struct {
 	Pick   string         `json:"pick,omitempty"` // parts picked on this page
 	Keep   bool           `json:"keep_plex,omitempty"`
 	Aura   bool           `json:"aura,omitempty"`
-	Art    *int           `json:"art"` // Mediux artwork count; null until checked
+	// AuraIgnored: AURA has a pick for this title that you ignore here.
+	AuraIgnored bool `json:"aura_ignored,omitempty"`
+	Art         *int `json:"art"` // Mediux artwork count; null until checked
 }
 
 // library answers GET /api/library (?refresh=1 rereads Plex now).
@@ -111,7 +113,8 @@ func (ui *webUI) library(w http.ResponseWriter, r *http.Request) {
 				it.Pick = p.parts()
 			}
 		}
-		it.Aura = ui.provider.aura.pin(it.Type, it.TMDB) != nil
+		it.Aura = ui.provider.auraFor(it.Type, it.TMDB) != nil
+		it.AuraIgnored = !it.Aura && ui.provider.aura.pin(it.Type, it.TMDB) != nil
 		if n, ok := ui.availability.count(key); ok {
 			it.Art = &n
 		}

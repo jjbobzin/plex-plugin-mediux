@@ -57,6 +57,7 @@ func (ui *webUI) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/review/approve", ui.guard(ui.approve))
 	mux.HandleFunc("POST /api/review/keep-plex", ui.guard(ui.keepPlex))
 	mux.HandleFunc("GET /api/review/choices", ui.choices)
+	mux.HandleFunc("POST /api/review/ignore-aura", ui.guard(ui.ignoreAura))
 	mux.HandleFunc("POST /api/plex-auth/start", ui.guard(ui.plexAuthStart))
 	mux.HandleFunc("GET /api/plex-auth/check", ui.plexAuthCheck)
 	mux.HandleFunc("POST /api/plex-auth/add", ui.guard(ui.plexAuthAdd))
