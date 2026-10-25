@@ -19,14 +19,15 @@ import (
 var settingsPage []byte
 
 type webUI struct {
-	settings *settingsStore
-	provider *plexProvider
-	plex     *plexClient
-	discord  *discord
-	auth     *plexAuth
-	activity *activityLog
-	relay    *http.Client
-	started  time.Time
+	settings     *settingsStore
+	provider     *plexProvider
+	plex         *plexClient
+	discord      *discord
+	auth         *plexAuth
+	availability *availability
+	activity     *activityLog
+	relay        *http.Client
+	started      time.Time
 }
 
 func (ui *webUI) routes(mux *http.ServeMux) {
@@ -49,6 +50,8 @@ func (ui *webUI) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/collection", ui.collection)
 	mux.HandleFunc("GET /api/plex-current", ui.plexNow)
 	mux.HandleFunc("GET /api/plex-image", ui.plexImage)
+	mux.HandleFunc("GET /api/library", ui.library)
+	mux.HandleFunc("GET /api/library/art", ui.libraryArt)
 	mux.HandleFunc("POST /api/plex-auth/start", ui.guard(ui.plexAuthStart))
 	mux.HandleFunc("GET /api/plex-auth/check", ui.plexAuthCheck)
 	mux.HandleFunc("POST /api/plex-auth/add", ui.guard(ui.plexAuthAdd))

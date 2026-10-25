@@ -23,6 +23,13 @@ type plexRef struct {
 	Section string // library section ID
 	Library string // library name
 	Custom  bool   // library uses a custom agent (one that can include Mediux Artwork)
+	// For the Library view.
+	Title   string
+	Year    int
+	Thumb   string // Plex image path of the current poster
+	AddedAt int64  // seconds since 1970
+	Type    mediaType
+	TMDB    string
 }
 
 // builtInAgent reports Plex's own agents. Libraries on them never ask this
@@ -138,10 +145,16 @@ func (pc *plexClient) index(ctx context.Context, srv plexServer, maxAge time.Dur
 			if json.Unmarshal(m["ratingKey"], &ratingKey) != nil || json.Unmarshal(m["Guid"], &guids) != nil {
 				continue
 			}
+			ref := plexRef{Key: ratingKey, Section: d.Key, Library: d.Title, Custom: !builtInAgent(d.Agent), Type: kind}
+			_ = json.Unmarshal(m["title"], &ref.Title)
+			_ = json.Unmarshal(m["year"], &ref.Year)
+			_ = json.Unmarshal(m["thumb"], &ref.Thumb)
+			_ = json.Unmarshal(m["addedAt"], &ref.AddedAt)
 			for _, g := range guids {
 				if id, ok := strings.CutPrefix(g.ID, "tmdb://"); ok {
+					ref.TMDB = id
 					k := string(kind) + ":" + id
-					built.items[k] = append(built.items[k], plexRef{ratingKey, d.Key, d.Title, !builtInAgent(d.Agent)})
+					built.items[k] = append(built.items[k], ref)
 				}
 			}
 		}

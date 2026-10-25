@@ -175,6 +175,20 @@
   .strip.movies figure.current > :first-child { outline: 2px solid var(--accent); outline-offset: 2px; }
   .strip.movies figcaption { max-width: 96px; overflow-wrap: anywhere; }
 
+  .filterrow { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  .filterrow label { display: flex; gap: 8px; align-items: center; margin: 0; font-weight: 500; color: var(--muted); font-size: 13.5px; }
+  .filterrow select { width: auto; padding: 7px 10px; }
+  .libgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; margin-top: 12px; }
+  .libcard { display: block; text-align: left; padding: 0; overflow: hidden; border-radius: 12px; background: var(--inset); border: 1px solid var(--line); }
+  .libcard:hover { border-color: var(--accent); }
+  .libcard .art { aspect-ratio: 2 / 3; width: 100%; object-fit: cover; display: block; background: #08080b; }
+  .libcard .art.missing { display: grid; place-items: center; color: var(--faint); font-size: 13px; }
+  .libcard .body { padding: 8px 10px 10px; display: grid; gap: 5px; }
+  .libcard .t { font-weight: 600; font-size: 14px; line-height: 1.3; }
+  .libcard .m { color: var(--muted); font-size: 12.5px; }
+  .libcard .badges { display: flex; gap: 5px; flex-wrap: wrap; }
+  .libcard .badge { font-size: 11.5px; padding: 1px 7px; }
+
   .pills { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 4px; }
   .pills button { border-radius: 999px; padding: 6px 14px; }
   .pills button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
@@ -215,7 +229,7 @@
   <div class="wrap">
     <nav class="tabs" role="tablist" aria-label="Sections">
       <button role="tab" data-tab="overview">Overview</button>
-      <button role="tab" data-tab="sets">Sets</button>
+      <button role="tab" data-tab="sets">Library</button>
       <button role="tab" data-tab="creators">Creators</button>
       <button role="tab" data-tab="artwork">Artwork</button>
       <button role="tab" data-tab="aura">AURA</button>
@@ -282,7 +296,7 @@
   <section class="tab" id="tab-sets" role="tabpanel">
     <div class="card">
       <h2>Pick a set</h2>
-      <p class="lead">Choose which Mediux set a movie or show uses, separately for the poster, background, season posters and title cards. Your pick wins over AURA and creator priority. Anything you don't pick follows the usual rules.</p>
+      <p class="lead">Click a title in your library below, or search Mediux for any title. Choose a set separately for the poster, background, season posters and title cards. Your pick wins over AURA and creator priority; anything you don't pick follows the usual rules.</p>
       <div class="row">
         <select id="setsType" style="width:auto">
           <option value="show">TV show</option>
@@ -304,6 +318,38 @@
         <p class="msg" id="pickMsg" role="status"></p>
         <div class="setcards" id="setCards"></div>
       </div>
+    </div>
+
+    <div class="card" id="libraryCard">
+      <div class="listhead">
+        <div><h2>Your library</h2><p class="lead" style="margin:0" id="libStatus">Everything on your Plex servers.</p></div>
+        <div class="listtools">
+          <input type="text" id="libSearch" placeholder="Search your library">
+          <select id="libSort" aria-label="Sort">
+            <option value="added">Date added</option>
+            <option value="title">Title</option>
+            <option value="year">Year</option>
+          </select>
+          <label>Show <select data-size="library" aria-label="Titles per page"></select></label>
+          <button type="button" id="libRefresh">Refresh</button>
+        </div>
+      </div>
+      <div class="pills" id="libLibraries"></div>
+      <div class="filterrow">
+        <label>Mediux art <select id="libArt">
+          <option value="">Any</option><option value="has">Has art</option><option value="none">No art</option><option value="unknown">Not checked yet</option>
+        </select></label>
+        <label>Picks <select id="libPick">
+          <option value="">Any</option><option value="mine">Your picks</option><option value="aura">AURA picks</option><option value="nopick">No pick</option>
+        </select></label>
+        <label>Agent <select id="libAgent">
+          <option value="">Any</option><option value="on">On a Mediux agent</option><option value="off">Not on a Mediux agent</option>
+        </select></label>
+        <button type="button" class="ghost" id="libReset">Reset filters</button>
+      </div>
+      <div class="pager" data-pager="library"></div>
+      <div class="libgrid" id="libGrid"></div>
+      <div class="pager" data-pager="library"></div>
     </div>
 
     <div class="card">
@@ -602,7 +648,11 @@ function makePager(name, tbody, colspan, row, emptyText) {
     const start = st.size ? (st.page - 1) * st.size : 0;
     const shown = st.size ? st.items.slice(start, start + st.size) : st.items;
     tbody.innerHTML = "";
-    if (!shown.length) tbody.append(el("tr", {}, el("td", { colspan: String(colspan), class: "hint", text: emptyText() })));
+    if (!shown.length) {
+      tbody.append(tbody.tagName === "TBODY"
+        ? el("tr", {}, el("td", { colspan: String(colspan), class: "hint", text: emptyText() }))
+        : el("p", { class: "hint", text: emptyText() }));
+    }
     for (const it of shown) tbody.append(row(it));
     for (const box of document.querySelectorAll(`[data-pager="${name}"]`)) {
       box.innerHTML = "";
@@ -643,7 +693,7 @@ function showTab(name) {
   for (const s of document.querySelectorAll("section.tab")) s.classList.toggle("active", s.id === "tab-" + name);
   if (name === "log") loadLog();
   if (name === "aura") loadAura();
-  if (name === "sets") loadPicks();
+  if (name === "sets") { loadPicks(); if (!libData) loadLibrary(false); }
   history.replaceState(null, "", "#" + name);
 }
 for (const b of tabs) b.onclick = () => showTab(b.dataset.tab);
@@ -1229,6 +1279,10 @@ $("pickSave").onclick = async () => {
     const res = await api("/api/picks", { method: "POST", body: JSON.stringify(body) });
     setsData.pick = Object.assign(emptyPick(), staged);
     say($("pickMsg"), res.status, true);
+    if (libData) { // show the new state on the title's library card
+      const it = libData.items.find((x) => x.type === setsData.type && String(x.tmdb) === String(setsData.tmdb));
+      if (it) { it.pick = PARTS.filter(([k]) => staged[k]).map(([, l]) => l.toLowerCase()).join(", "); renderLibrary(true); }
+    }
     loadPicks();
   } catch (e) { say($("pickMsg"), e.message, false); }
   finally { $("pickSave").disabled = false; }
@@ -1259,6 +1313,118 @@ function renderPicks(keepPage) {
     (!f || (p.title || "").toLowerCase().includes(f))), keepPage);
 }
 $("picksFilter").addEventListener("input", () => renderPicks(false));
+
+/* ---------- Library ---------- */
+let libData = null, libPoll = null;
+const libKey = (it) => it.type + ":" + it.tmdb;
+const normTitleJS = (t) => (t || "").toLowerCase().replace(/^the\s+/, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+const libLibrariesOf = (it) => [...new Set(it.places.map((p) => p.library))];
+let libSelected = new Set(JSON.parse(recall("libLibraries") || "[]"));
+
+const libPager = makePager("library", $("libGrid"), 1, (it) => {
+  const art = it.poster ? el("img", { class: "art", src: it.poster, alt: it.title, loading: "lazy" })
+    : el("div", { class: "art missing", text: "No poster" });
+  const badges = el("div", { class: "badges" });
+  if (it.pick) badges.append(el("span", { class: "badge fav", text: "Your pick" }));
+  if (it.aura) badges.append(el("span", { class: "badge", text: "AURA pick" }));
+  if (it.art == null) badges.append(el("span", { class: "badge", text: (libData.availability || {}).running ? "Checking Mediux…" : "Not checked yet" }));
+  else if (it.art === 0) badges.append(el("span", { class: "badge", text: "No Mediux art" }));
+  else badges.append(el("span", { class: "badge auto", text: plural(it.art, "Mediux image", "Mediux images") }));
+  if (!it.places.some((p) => p.custom)) badges.append(el("span", { class: "badge warn", text: "Not on a Mediux agent" }));
+  const meta = [it.year, libLibrariesOf(it).join(", ")].filter(Boolean).join(" · ");
+  return el("button", { type: "button", class: "libcard", title: it.places.map((p) => p.server + " · " + p.library).join("\n"),
+    onclick: () => {
+      $("setsType").value = it.type; $("setsQ").value = it.tmdb;
+      findSets(it.type, it.tmdb);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } }, art, el("div", { class: "body" }, el("div", { class: "t", text: it.title }), el("div", { class: "m", text: meta }), badges));
+}, () => (libData && libData.items.length ? "No titles match these filters." : "Nothing loaded yet."));
+
+async function loadLibrary(refresh) {
+  $("libStatus").textContent = refresh ? "Reading your Plex libraries…" : "Loading…";
+  try { libData = await api("/api/library" + (refresh ? "?refresh=1" : "")); }
+  catch (e) { $("libStatus").textContent = e.message; return; }
+  if (!libData.configured) {
+    $("libStatus").textContent = "Sign in with Plex on the Watch & notify tab to see your library here.";
+    libData.items = []; renderLibrary(false); return;
+  }
+  renderLibrary(false);
+  watchAvailability();
+}
+
+function libStatusText() {
+  const n = libData.items.length, a = libData.availability || {};
+  let text = plural(n, "title", "titles") + " on your Plex servers, read " + ago(libData.built) + ".";
+  if (a.running) text += " Checking Mediux: " + a.done + " of " + a.total + "…";
+  if (a.error) text += " Mediux check problem: " + a.error;
+  if (libData.problems && libData.problems.length) text += " " + libData.problems.join("; ");
+  return text;
+}
+
+// While Mediux is being checked, update the counts every few seconds.
+function watchAvailability() {
+  clearTimeout(libPoll);
+  if (!libData || !(libData.availability || {}).running) return;
+  libPoll = setTimeout(async () => {
+    try {
+      const d = await api("/api/library/art");
+      for (const it of libData.items) { const n = d.counts[libKey(it)]; if (n !== undefined) it.art = n; }
+      libData.availability = d.availability;
+      renderLibrary(true);
+    } catch (_) {}
+    watchAvailability();
+  }, 4000);
+}
+
+function renderLibrary(keepPage) {
+  if (!libData) return;
+  $("libStatus").textContent = libData.configured ? libStatusText() : $("libStatus").textContent;
+  // Library pills: pick one or several; none picked shows every library.
+  const counts = {};
+  for (const it of libData.items) for (const lib of libLibrariesOf(it)) counts[lib] = (counts[lib] || 0) + 1;
+  const box = $("libLibraries");
+  box.innerHTML = "";
+  for (const lib of Object.keys(counts).sort()) {
+    box.append(el("button", { type: "button", "aria-pressed": String(libSelected.has(lib)), onclick: () => {
+      libSelected.has(lib) ? libSelected.delete(lib) : libSelected.add(lib);
+      remember("libLibraries", JSON.stringify([...libSelected]));
+      renderLibrary(false);
+    } }, lib, el("span", { class: "count", text: String(counts[lib]) })));
+  }
+  const q = normTitleJS($("libSearch").value), art = $("libArt").value, pick = $("libPick").value, agent = $("libAgent").value;
+  let items = libData.items.filter((it) => {
+    if (libSelected.size && !libLibrariesOf(it).some((l) => libSelected.has(l))) return false;
+    if (q && !normTitleJS(it.title).includes(q)) return false;
+    if (art === "has" && !(it.art > 0)) return false;
+    if (art === "none" && it.art !== 0) return false;
+    if (art === "unknown" && it.art != null) return false;
+    if (pick === "mine" && !it.pick) return false;
+    if (pick === "aura" && !it.aura) return false;
+    if (pick === "nopick" && (it.pick || it.aura)) return false;
+    const on = it.places.some((p) => p.custom);
+    if (agent === "on" && !on) return false;
+    if (agent === "off" && on) return false;
+    return true;
+  });
+  const sort = $("libSort").value;
+  items = items.slice().sort((a, b) => sort === "title" ? normTitleJS(a.title).localeCompare(normTitleJS(b.title))
+    : sort === "year" ? (b.year || 0) - (a.year || 0) || normTitleJS(a.title).localeCompare(normTitleJS(b.title))
+    : b.added - a.added);
+  libPager.set(items, keepPage);
+}
+
+for (const id of ["libArt", "libPick", "libAgent", "libSort"]) {
+  try { const v = recall("lib:" + id); if (v !== null) $(id).value = v; } catch (_) {}
+  $(id).onchange = () => { remember("lib:" + id, $(id).value); renderLibrary(false); };
+}
+$("libSearch").addEventListener("input", () => renderLibrary(false));
+$("libRefresh").onclick = () => loadLibrary(true);
+$("libReset").onclick = () => {
+  libSelected.clear(); remember("libLibraries", "[]");
+  for (const id of ["libArt", "libPick", "libAgent"]) { $(id).value = ""; remember("lib:" + id, ""); }
+  $("libSearch").value = "";
+  renderLibrary(false);
+};
 
 /* ---------- Try it ---------- */
 $("previewBtn").onclick = async () => {

@@ -29,7 +29,8 @@ func newApp(store *settingsStore, configDir string) *app {
 	a.watch = newWatcher(a.provider, a.plexAPI, a.discord, configDir)
 	a.provider.watch = a.watch
 	a.auth = newPlexAuth(store)
-	ui := &webUI{settings: store, provider: a.provider, plex: a.plexAPI, discord: a.discord, auth: a.auth, activity: a.activity,
+	ui := &webUI{settings: store, provider: a.provider, plex: a.plexAPI, discord: a.discord, auth: a.auth,
+		availability: loadAvailability(configDir), activity: a.activity,
 		relay: &http.Client{Timeout: 60 * time.Second}, started: time.Now()}
 	a.mux = http.NewServeMux()
 	ui.routes(a.mux)

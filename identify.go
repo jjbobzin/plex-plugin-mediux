@@ -93,9 +93,11 @@ func tagIDs(h hints) (tmdb, tvdb string) {
 	return tmdb, tvdb
 }
 
-// normTitle makes titles comparable: lower case, letters and digits only.
+// normTitle makes titles comparable: lower case, letters and digits only,
+// and no leading "The" ("terminal list" matches "The Terminal List").
 func normTitle(s string) string {
-	s = strings.ReplaceAll(strings.ToLower(s), "&", "and")
+	s = strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "&", "and")
+	s = strings.TrimPrefix(s, "the ")
 	var b strings.Builder
 	for _, r := range s {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {

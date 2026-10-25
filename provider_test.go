@@ -129,6 +129,13 @@ func fakeMediux(t *testing.T) *httptest.Server {
 				map[string]any{"id": "1", "title": "Dirty Grandpa Returns", "release_date": "2030-01-01"},
 				map[string]any{"id": "291870", "title": "Dirty Grandpa", "release_date": "2016-01-22"},
 			}}
+		case strings.Contains(body.Query, "{items:"):
+			// Artwork counts for many titles at once; 1923 has 9 images.
+			items := []any{}
+			if strings.Contains(body.Query, `"194764"`) {
+				items = append(items, map[string]any{"id": "194764", "posters_func": map[string]any{"count": 9}})
+			}
+			data = map[string]any{"items": items}
 		case strings.Contains(body.Query, "collection_sets_by_id"):
 			movie := func(id, title string) map[string]any {
 				return map[string]any{"movie": map[string]any{"id": id, "title": title, "release_date": "2016-01-22"}}
@@ -578,7 +585,10 @@ func (f *fakePlex) server(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Metadata": []any{
 				// Real Plex sends both "guid" (one plex:// string) and "Guid" (a list).
 				map[string]any{"ratingKey": "777", "guid": "plex://show/5d9c086c46115600200aa2fe",
-					"Guid": []any{map[string]any{"id": "imdb://tt1"}, map[string]any{"id": "tmdb://194764"}}}}}})
+					"title": "1923", "year": 2022, "thumb": "/library/metadata/777/thumb/9", "addedAt": 1700000000,
+					"Guid": []any{map[string]any{"id": "imdb://tt1"}, map[string]any{"id": "tmdb://194764"}}},
+				map[string]any{"ratingKey": "778", "guid": "plex://show/b", "title": "Unknown Show", "year": 2020,
+					"Guid": []any{map[string]any{"id": "tmdb://424242"}}}}}})
 		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/refresh"):
 			f.mu.Lock()
 			f.refreshed = append(f.refreshed, r.URL.Path)
@@ -1057,5 +1067,60 @@ func TestSignInWithPlexFindsReachableServers(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "Streamstead,Unlimited-Primary,Streamstead (2)" {
 		t.Fatalf("names: %v", names)
+	}
+}
+
+func TestLibraryMergesServersAndChecksMediux(t *testing.T) {
+	fp := &fakePlex{}
+	plexSrv := fp.server(t)
+	h := newHarness(t, func(s *settings) {
+		s.PlexServers = []plexServer{{Name: "Unlimited-Primary", URL: plexSrv.URL, Token: "plex-token"}}
+	})
+	out := h.get(t, "/api/library")
+	items := out["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("want 2 titles (1923 in two libraries is one title), got %v", items)
+	}
+	var show map[string]any
+	for _, x := range items {
+		if x.(map[string]any)["tmdb"] == "194764" {
+			show = x.(map[string]any)
+		}
+	}
+	places := show["places"].([]any)
+	if show["title"] != "1923" || show["year"].(float64) != 2022 || len(places) != 2 {
+		t.Fatalf("1923 should be listed once with both libraries: %v", show)
+	}
+	if !strings.Contains(show["poster"].(string), "777") {
+		t.Errorf("the poster should come from the Mediux-agent library: %v", show["poster"])
+	}
+	// The first answer already says a check is running, so the page follows it.
+	if a := out["availability"].(map[string]any); a["running"] != true || a["total"].(float64) != 2 {
+		t.Fatalf("the check should be reported as running from the start: %v", a)
+	}
+	// The background Mediux check fills in artwork counts.
+	deadline := time.Now().Add(3 * time.Second)
+	var counts map[string]any
+	for time.Now().Before(deadline) {
+		d := h.get(t, "/api/library/art")
+		counts = d["counts"].(map[string]any)
+		if len(counts) == 2 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if counts["show:194764"] != float64(9) || counts["show:424242"] != float64(0) {
+		t.Fatalf("artwork counts: %v", counts)
+	}
+}
+
+func TestTitleMatchIgnoresLeadingThe(t *testing.T) {
+	list := []titleMatch{{ID: "1", Title: "The Terminal List", Date: "2022-07-01"}}
+	if got := pickTitle(list, "terminal list", 0); got != "1" {
+		t.Errorf("\"terminal list\" should match \"The Terminal List\", got %q", got)
+	}
+	years := []titleMatch{{ID: "a", Title: "Matrix", Date: "1973-01-01"}, {ID: "b", Title: "The Matrix", Date: "1999-03-31"}}
+	if got := pickTitle(years, "The Matrix", 1999); got != "b" {
+		t.Errorf("the year should still pick the right film, got %q", got)
 	}
 }
