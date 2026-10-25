@@ -29,15 +29,23 @@ type userPick struct {
 	BackSet   string    `json:"background_set,omitempty"`
 	SeasonSet string    `json:"season_set,omitempty"`
 	CardSet   string    `json:"titlecard_set,omitempty"`
+	KeepPlex  bool      `json:"keep_plex,omitempty"` // never give this title Mediux art
 	Updated   time.Time `json:"updated"`
 }
 
 func (u userPick) empty() bool {
-	return u.PosterSet == "" && u.BackSet == "" && u.SeasonSet == "" && u.CardSet == ""
+	return !u.KeepPlex && !u.hasSets()
+}
+
+func (u userPick) hasSets() bool {
+	return u.PosterSet != "" || u.BackSet != "" || u.SeasonSet != "" || u.CardSet != ""
 }
 
 // parts describes what a pick covers, for the settings page.
 func (u userPick) parts() string {
+	if u.KeepPlex {
+		return "keeps Plex art"
+	}
 	var out []string
 	for _, p := range []struct{ set, name string }{{u.PosterSet, "poster"}, {u.BackSet, "background"},
 		{u.SeasonSet, "season posters"}, {u.CardSet, "title cards"}} {
@@ -95,6 +103,9 @@ func (ps *pickStore) put(p userPick) error {
 	}
 	if p.Type == typeMovie {
 		p.SeasonSet, p.CardSet = "", ""
+	}
+	if p.KeepPlex { // keeping Plex art replaces any sets picked before
+		p.PosterSet, p.BackSet, p.SeasonSet, p.CardSet = "", "", "", ""
 	}
 	p.Updated = time.Now()
 	ps.mu.Lock()

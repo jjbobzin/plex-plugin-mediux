@@ -52,6 +52,9 @@ func (ui *webUI) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/plex-image", ui.plexImage)
 	mux.HandleFunc("GET /api/library", ui.library)
 	mux.HandleFunc("GET /api/library/art", ui.libraryArt)
+	mux.HandleFunc("POST /api/review/approve", ui.guard(ui.approve))
+	mux.HandleFunc("POST /api/review/keep-plex", ui.guard(ui.keepPlex))
+	mux.HandleFunc("GET /api/review/choices", ui.choices)
 	mux.HandleFunc("POST /api/plex-auth/start", ui.guard(ui.plexAuthStart))
 	mux.HandleFunc("GET /api/plex-auth/check", ui.plexAuthCheck)
 	mux.HandleFunc("POST /api/plex-auth/add", ui.guard(ui.plexAuthAdd))
@@ -113,17 +116,24 @@ func (ui *webUI) getSettings(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (ui *webUI) saveSettings(w http.ResponseWriter, r *http.Request) {
-	var in struct {
+	current := ui.settings.get()
+	// Start from the saved settings so fields the page doesn't send (an
+	// older page left open, say) keep their values.
+	in := struct {
 		settings
 		ClearToken   bool `json:"clear_token"`
 		ClearDiscord bool `json:"clear_discord"`
-	}
+	}{settings: current}
+	in.Token, in.DiscordWebhook = "", "" // secrets only change when sent
+	in.PlexServers = nil
 	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&in); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "could not read settings"})
 		return
 	}
+	if in.PlexServers == nil {
+		in.PlexServers = current.PlexServers
+	}
 	next := in.settings
-	current := ui.settings.get()
 	// Blank secrets mean "keep the saved one".
 	next.Token = strings.TrimSpace(next.Token)
 	if next.Token == "" && !in.ClearToken {

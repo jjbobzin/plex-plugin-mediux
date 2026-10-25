@@ -41,6 +41,29 @@ type plexProvider struct {
 	watch    *watcher
 }
 
+// Reasons a title gets no Mediux art from Plex's point of view.
+const (
+	reasonReview   = "waiting for review"
+	reasonKeepPlex = "kept Plex art"
+)
+
+// gate says whether Plex may get Mediux art for a title: "" if yes, else why
+// not. "Keep Plex art" always wins; in "approved" mode a title also needs a
+// pick made on the page or in AURA.
+func (p *plexProvider) gate(typ mediaType, tmdb string) string {
+	pick := p.picks.get(typ, tmdb)
+	if pick != nil && pick.KeepPlex {
+		return reasonKeepPlex
+	}
+	if p.settings.get().ApplyMode == "all" {
+		return ""
+	}
+	if pick != nil && pick.hasSets() || p.aura.pin(typ, tmdb) != nil {
+		return ""
+	}
+	return reasonReview
+}
+
 // overrides gathers the settings-page pick and the AURA pick for a title.
 func (p *plexProvider) overrides(typ mediaType, tmdb string) override {
 	return override{pick: p.picks.get(typ, tmdb), aura: p.aura.pin(typ, tmdb)}
@@ -219,8 +242,13 @@ func describe(what string, c choice) string {
 }
 
 func resultWord(found string) string {
-	if found == "no Mediux artwork" {
+	switch found {
+	case "no Mediux artwork":
 		return "no artwork"
+	case reasonReview:
+		return "to review"
+	case reasonKeepPlex:
+		return "kept Plex art"
 	}
 	return "matched"
 }
@@ -270,6 +298,10 @@ func (p *plexProvider) movieItem(ctx context.Context, pr *plexRequest, tmdb, lab
 	}
 	cfg := p.settings.get()
 	ov := p.overrides(typeMovie, tmdb)
+	blocked := p.gate(typeMovie, tmdb)
+	if blocked != "" {
+		b, ov = bundle{}, override{} // Plex keeps its own artwork
+	}
 	var images []plexImage
 	var parts []string
 	poster := choosePoster(b, cfg, pr.language, ov)
@@ -291,7 +323,9 @@ func (p *plexProvider) movieItem(ctx context.Context, pr *plexRequest, tmdb, lab
 		item["Image"] = images
 	}
 	summary := "no Mediux artwork"
-	if len(parts) > 0 {
+	if blocked != "" {
+		summary = blocked
+	} else if len(parts) > 0 {
 		summary = strings.Join(parts, ", ")
 	}
 	posterURL := ""
@@ -358,6 +392,7 @@ func (p *plexProvider) tvMatch(pr *plexRequest) {
 		p.fail(pr, tvIdentifier, "show", title, err)
 		return
 	}
+	sh.block(p.gate(typeShow, id))
 	var item map[string]any
 	switch t {
 	case 2:
@@ -403,6 +438,9 @@ func (p *plexProvider) tvMetadata(pr *plexRequest, rest string) {
 	if err != nil {
 		p.fail(pr, tvIdentifier, "show", "TMDB "+m[1], err)
 		return
+	}
+	if sub != "images" { // the Edit → Poster picker is your own manual choice
+		sh.block(p.gate(typeShow, m[1]))
 	}
 	item := sh.showItem()
 	if episode >= 0 {
@@ -460,6 +498,7 @@ type show struct {
 	seasons   setChoice
 	cards     setChoice
 	ov        override
+	blocked   string        // why Plex gets no Mediux art for this show, if it doesn't
 	structure map[int][]int // season -> episodes, from Mediux and artwork coverage
 }
 
@@ -546,6 +585,15 @@ func (sh *show) observe(title, summary string) {
 	sh.p.watch.observe(typeShow, sh.tmdb, title, sh.pr.language, sh.signature(), basis(sh.cfg, sh.ov), posterURL, summary)
 }
 
+// block withholds all Mediux art from Plex for this show, for the reason given.
+func (sh *show) block(reason string) {
+	if reason == "" {
+		return
+	}
+	sh.blocked = reason
+	sh.b, sh.ov, sh.seasons, sh.cards = bundle{}, override{}, setChoice{}, setChoice{}
+}
+
 func (sh *show) poster() choice {
 	return choosePoster(sh.b, sh.cfg, sh.pr.language, sh.ov)
 }
@@ -567,6 +615,9 @@ func (sh *show) card(season, episode int) choice {
 }
 
 func (sh *show) summary() string {
+	if sh.blocked != "" {
+		return sh.blocked
+	}
 	var parts []string
 	if c := sh.poster(); c.ok {
 		parts = append(parts, describe("poster", c))

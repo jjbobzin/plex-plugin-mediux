@@ -182,6 +182,7 @@ func newHarness(t *testing.T, edit func(*settings)) *harness {
 	}
 	s := store.get()
 	s.Token = "good-token"
+	s.ApplyMode = "all" // most tests check the artwork rules themselves
 	s.PriorityCreators = []string{"willtong93"}
 	s.ExcludedCreators = []string{"MrMagixx"}
 	if edit != nil {
@@ -1122,5 +1123,85 @@ func TestTitleMatchIgnoresLeadingThe(t *testing.T) {
 	years := []titleMatch{{ID: "a", Title: "Matrix", Date: "1973-01-01"}, {ID: "b", Title: "The Matrix", Date: "1999-03-31"}}
 	if got := pickTitle(years, "The Matrix", 1999); got != "b" {
 		t.Errorf("the year should still pick the right film, got %q", got)
+	}
+}
+
+func postJSON(t *testing.T, h *harness, path string, body any) map[string]any {
+	t.Helper()
+	raw, _ := json.Marshal(body)
+	req, _ := http.NewRequest(http.MethodPost, h.server.URL+path, strings.NewReader(string(raw)))
+	req.Header.Set("X-Mediux-Settings", "1")
+	return decode(t, mustDo(t, req))
+}
+
+func TestReviewModeOnlyApprovedTitlesGetArt(t *testing.T) {
+	// An AURA pick counts as approved (the sample AURA.db pins both titles).
+	path := t.TempDir() + "/AURA.db"
+	writeAuraDB(t, path)
+	ha := newHarness(t, func(s *settings) { s.ApplyMode = "approved"; s.AuraDB = path })
+	if m := metadata(t, ha.get(t, "/movies/library/metadata/tmdb-291870"))[0]; m["thumb"] == nil {
+		t.Errorf("an AURA-picked title is approved: %v", m)
+	}
+
+	h := newHarness(t, func(s *settings) { s.ApplyMode = "approved" })
+
+	// Not approved yet: Plex keeps its own art, and the Log says why.
+	movie := metadata(t, h.get(t, "/movies/library/metadata/tmdb-291870"))[0]
+	if _, ok := movie["thumb"]; ok {
+		t.Fatalf("an unapproved title must get no Mediux art: %v", movie)
+	}
+	if got := h.activity.recent()[0]; got.Result != "to review" {
+		t.Errorf("log should say it waits for review: %+v", got)
+	}
+	// Shows wait too: no season poster without approval.
+	if s1 := metadata(t, h.get(t, "/tv/library/metadata/tmdb-194764-s1"))[0]; s1["thumb"] != nil {
+		t.Errorf("an unapproved show must get no season poster: %v", s1)
+	}
+
+	// The provider's choice, for comparing on the Library tab.
+	ch := h.get(t, "/api/review/choices?keys=movie:291870")["choices"].(map[string]any)
+	if c := ch["movie:291870"].(map[string]any); c["creator"] != "willtong93" || !strings.Contains(c["poster"].(string), uuid(3)) {
+		t.Errorf("provider's choice: %v", c)
+	}
+
+	// Approving saves that choice as the pick, and Plex now gets it.
+	out := postJSON(t, h, "/api/review/approve", map[string]any{"items": []any{
+		map[string]any{"type": "movie", "tmdb": "291870", "title": "Dirty Grandpa", "year": 2016}}})
+	if out["approved"].(float64) != 1 {
+		t.Fatalf("approve: %v", out)
+	}
+	if p := h.app.provider.picks.get(typeMovie, "291870"); p == nil || p.PosterSet != "set-b" || p.BackSet != "set-b" {
+		t.Fatalf("approved pick: %+v", p)
+	}
+	movie = metadata(t, h.get(t, "/movies/library/metadata/tmdb-291870"))[0]
+	if assetOf(movie["thumb"]) != uuid(3) {
+		t.Errorf("approved title should get its art: %v", movie["thumb"])
+	}
+
+	// Keep Plex art wins, even after approving and even in all-titles mode.
+	postJSON(t, h, "/api/review/keep-plex", map[string]any{"keep": true, "items": []any{
+		map[string]any{"type": "movie", "tmdb": "291870", "title": "Dirty Grandpa"}}})
+	s := h.store.get()
+	s.ApplyMode = "all"
+	_ = h.store.save(s)
+	movie = metadata(t, h.get(t, "/movies/library/metadata/tmdb-291870"))[0]
+	if _, ok := movie["thumb"]; ok {
+		t.Fatalf("keep Plex art must win: %v", movie)
+	}
+	// Undo: back to the normal rules.
+	postJSON(t, h, "/api/review/keep-plex", map[string]any{"keep": false, "items": []any{
+		map[string]any{"type": "movie", "tmdb": "291870", "title": "Dirty Grandpa"}}})
+	movie = metadata(t, h.get(t, "/movies/library/metadata/tmdb-291870"))[0]
+	if _, ok := movie["thumb"]; !ok {
+		t.Errorf("after undo, all-titles mode gives art again: %v", movie)
+	}
+}
+
+func TestSavingSettingsKeepsFieldsNotSent(t *testing.T) {
+	h := newHarness(t, func(s *settings) { s.ApplyMode = "approved"; s.WatchHours = 6 })
+	postJSON(t, h, "/api/settings", map[string]any{"cache_hours": 3})
+	s := h.store.get()
+	if s.ApplyMode != "approved" || s.WatchHours != 6 || s.CacheHours != 3 || s.Token != "good-token" {
+		t.Fatalf("fields not sent must keep their values: %+v", s)
 	}
 }

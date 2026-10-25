@@ -34,6 +34,7 @@ type libraryItem struct {
 	Poster string         `json:"poster,omitempty"`
 	Places []libraryPlace `json:"places"`
 	Pick   string         `json:"pick,omitempty"` // parts picked on this page
+	Keep   bool           `json:"keep_plex,omitempty"`
 	Aura   bool           `json:"aura,omitempty"`
 	Art    *int           `json:"art"` // Mediux artwork count; null until checked
 }
@@ -94,7 +95,11 @@ func (ui *webUI) library(w http.ResponseWriter, r *http.Request) {
 	for _, key := range order {
 		it := byKey[key]
 		if p := ui.provider.picks.get(it.Type, it.TMDB); p != nil {
-			it.Pick = p.parts()
+			if p.KeepPlex {
+				it.Keep = true
+			} else {
+				it.Pick = p.parts()
+			}
 		}
 		it.Aura = ui.provider.aura.pin(it.Type, it.TMDB) != nil
 		if n, ok := ui.availability.count(key); ok {
@@ -111,7 +116,7 @@ func (ui *webUI) library(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 200, map[string]any{
 		"configured": true, "items": items, "built": built, "problems": problems,
-		"availability": ui.availability.progress(),
+		"availability": ui.availability.progress(), "apply_mode": cfg.ApplyMode,
 	})
 }
 

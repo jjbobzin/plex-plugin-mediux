@@ -45,6 +45,10 @@ type settings struct {
 	NotifyUpdates  bool         `json:"notify_updates"`   // new or changed artwork found by the watcher
 	NotifyNewItems bool         `json:"notify_new_items"` // a newly added title got Mediux artwork
 
+	// Which titles get Mediux art: "approved" (only titles with a pick made
+	// on the page or in AURA) or "all" (creator rules decide for the rest).
+	ApplyMode string `json:"apply_mode"`
+
 	// When you pick a set on the Sets tab, also replace artwork that is
 	// locked in Plex (uploaded by AURA, Kometa or by hand).
 	ReplaceLocked bool `json:"replace_locked"`
@@ -76,6 +80,7 @@ func defaultSettings() settings {
 		RefreshPlex:          true,
 		PlexServers:          []plexServer{},
 		NotifyUpdates:        true,
+		ApplyMode:            "approved",
 	}
 }
 
@@ -95,6 +100,9 @@ func (s settings) validate() error {
 	}
 	if s.CacheHours < 0 || s.CacheHours > 168 {
 		return errors.New("cache hours must be between 0 and 168")
+	}
+	if s.ApplyMode != "approved" && s.ApplyMode != "all" {
+		return errors.New("apply mode must be approved or all")
 	}
 	if s.WatchHours < 0 || s.WatchHours > 168 {
 		return errors.New("watch interval must be between 0 and 168 hours")

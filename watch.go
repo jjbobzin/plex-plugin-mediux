@@ -74,13 +74,13 @@ func newWatcher(p *plexProvider, plex *plexClient, d *discord, dir string) *watc
 // basis fingerprints everything on our side that decides which art is picked.
 func basis(cfg settings, o override) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%q|%q|%v|%s|%s|%s|", cfg.PriorityCreators, cfg.ExcludedCreators, cfg.OnlyPriority,
-		cfg.SeasonConsistency, cfg.TitlecardConsistency, cfg.MissingArtwork)
+	fmt.Fprintf(h, "%q|%q|%v|%s|%s|%s|%s|", cfg.PriorityCreators, cfg.ExcludedCreators, cfg.OnlyPriority,
+		cfg.SeasonConsistency, cfg.TitlecardConsistency, cfg.MissingArtwork, cfg.ApplyMode)
 	if pin := o.aura; pin != nil {
 		fmt.Fprintf(h, "%s|%s|%v|%v|", pin.Poster, pin.Backdrop, pin.Seasons, pin.Cards)
 	}
 	if p := o.pick; p != nil {
-		fmt.Fprintf(h, "%s|%s|%s|%s", p.PosterSet, p.BackSet, p.SeasonSet, p.CardSet)
+		fmt.Fprintf(h, "%s|%s|%s|%s|%v", p.PosterSet, p.BackSet, p.SeasonSet, p.CardSet, p.KeepPlex)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
@@ -281,12 +281,18 @@ func (w *watcher) checkOne(ctx context.Context, it trackedItem, cfg settings) bo
 			return false
 		}
 		ov = w.p.overrides(typeMovie, it.TMDB)
+		if w.p.gate(typeMovie, it.TMDB) != "" {
+			b = bundle{} // not approved: nothing new for Plex to get
+		}
 		sig = movieSignature(b, cfg, it.Language, ov)
 		if c := choosePoster(b, cfg, it.Language, ov); c.ok {
 			posterURL = imageURL(c.art, "optimized")
 		}
 	} else {
 		sh, err := w.p.loadShow(ctx, pr, it.TMDB)
+		if err == nil {
+			sh.block(w.p.gate(typeShow, it.TMDB))
+		}
 		if err != nil {
 			w.markChecked(key)
 			return false
