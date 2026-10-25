@@ -40,7 +40,7 @@
   nav.tabs button:hover { color: var(--text); }
   nav.tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
 
-  main.wrap { padding-top: 26px; padding-bottom: 120px; }
+  main.wrap { padding-top: 26px; padding-bottom: 150px; }
   section.tab { display: none; }
   section.tab.active { display: block; }
   .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; margin-bottom: 18px; }
@@ -88,7 +88,8 @@
   .suggest { position: absolute; z-index: 10; left: 0; right: 0; top: calc(100% + 4px); background: var(--surface-2);
     border: 1px solid var(--line); border-radius: 10px; max-height: 260px; overflow: auto; display: none; box-shadow: 0 12px 30px rgba(0,0,0,.4); }
   .suggest button { display: block; width: 100%; text-align: left; border: none; border-radius: 0; background: none; padding: 9px 14px; }
-  .suggest button:hover, .suggest button:focus { background: var(--accent-soft); }
+  .suggest button:hover, .suggest button:focus, .suggest button.active { background: var(--accent-soft); }
+  .suggest .sub { color: var(--muted); font-size: 12.5px; margin-left: 6px; }
   .empty { color: var(--muted); padding: 12px 14px; font-size: 14px; list-style: none; }
 
   ol.rank { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
@@ -182,15 +183,18 @@
   .filterrow label { display: flex; gap: 8px; align-items: center; margin: 0; font-weight: 500; color: var(--muted); font-size: 13.5px; }
   .filterrow select { width: auto; padding: 7px 10px; }
   .libgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; margin-top: 12px; }
-  .libcard { display: block; text-align: left; padding: 0; overflow: hidden; border-radius: 12px; background: var(--inset); border: 1px solid var(--line); }
+  .libgrid { align-items: stretch; }
+  /* Cards are buttons, which center their contents; pin everything to the top. */
+  .libcard { display: flex; flex-direction: column; justify-content: flex-start; align-items: stretch; height: 100%;
+    text-align: left; padding: 0; overflow: hidden; border-radius: 12px; background: var(--inset); border: 1px solid var(--line); }
   .libcard:hover { border-color: var(--accent); }
-  .libcard .art { aspect-ratio: 2 / 3; width: 100%; object-fit: cover; display: block; background: #08080b; }
+  .libcard .art { aspect-ratio: 2 / 3; width: 100%; object-fit: cover; display: block; background: #08080b; flex: none; }
   .libcard .art.missing { display: grid; place-items: center; color: var(--faint); font-size: 13px; }
-  .libcard .body { padding: 8px 10px 10px; display: grid; gap: 5px; }
-  .libcard .t { font-weight: 600; font-size: 14px; line-height: 1.3; }
-  .libcard .m { color: var(--muted); font-size: 12.5px; }
-  .libcard .badges { display: flex; gap: 5px; flex-wrap: wrap; }
-  .libcard .badge { font-size: 11.5px; padding: 1px 7px; }
+  .libcard .body { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .libcard .t { font-weight: 600; font-size: 14px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.6em; }
+  .libcard .m { color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .libcard .badges { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
+  .libcard .badge { font-size: 11px; padding: 1px 7px; }
 
   .bulkbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
   .bulkbar .msg { margin: 0; }
@@ -221,9 +225,16 @@
   .pager button { padding: 5px 11px; min-width: 36px; }
   .pager input[type=number] { width: 68px; text-align: center; padding: 5px 6px; }
 
-  .savebar { position: fixed; left: 0; right: 0; bottom: 0; background: rgba(13,14,18,.94); border-top: 1px solid var(--line);
-    backdrop-filter: blur(8px); transform: translateY(100%); transition: transform .18s ease; }
-  .savebar.show { transform: none; }
+  .footer { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: rgba(13,14,18,.96); border-top: 1px solid var(--line); backdrop-filter: blur(8px); font-size: 13px; color: var(--muted); }
+  .footer .wrap { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; }
+  .footer a { color: var(--muted); text-decoration: none; }
+  .footer a:hover { color: var(--text); }
+  .footer .update { color: var(--warn); font-weight: 600; }
+  .footer .update a { color: var(--warn); text-decoration: underline; }
+  .footer .spacer { flex: 1; }
+  .savebar { position: fixed; left: 0; right: 0; bottom: 37px; z-index: 21; background: rgba(13,14,18,.96); border-top: 1px solid var(--line);
+    backdrop-filter: blur(8px); display: none; }
+  .savebar.show { display: block; }
   .savebar .wrap { display: flex; gap: 12px; align-items: center; justify-content: flex-end; padding-top: 12px; padding-bottom: 12px; flex-wrap: wrap; }
   .savebar .msg { margin: 0; flex: 1; }
 </style>
@@ -315,17 +326,23 @@
     <div class="card">
       <h2>Pick a set</h2>
       <p class="lead">Click a title in your library below, or search Mediux for any title. Choose a set separately for the poster, background, season posters and title cards. Your pick wins over AURA and creator priority; anything you don't pick follows the usual rules.</p>
-      <div class="row">
-        <select id="setsType" style="width:auto">
+      <div class="row search" id="setsSearch">
+        <select id="setsType" style="width:auto" aria-label="Movie or TV show (for Mediux search)">
           <option value="show">TV show</option>
           <option value="movie">Movie</option>
         </select>
-        <input type="text" id="setsQ" placeholder="Title, title with year, or TMDB ID">
-        <button type="button" class="primary" id="setsBtn">Find sets</button>
+        <input type="text" id="setsQ" placeholder="Start typing a title from your library, or a TMDB ID" autocomplete="off"
+          role="combobox" aria-expanded="false" aria-controls="setsSuggest">
+        <button type="button" class="primary" id="setsBtn">Search Mediux</button>
+        <div class="suggest" id="setsSuggest" role="listbox"></div>
       </div>
       <p class="msg" id="setsMsg" role="status"></p>
       <div class="others" id="setsOthers" hidden></div>
       <div id="setsResult" hidden>
+        <div class="row" style="margin-top:12px">
+          <button type="button" id="backToLibrary">← Back to library</button>
+          <button type="button" class="ghost" id="closeTitle">Close</button>
+        </div>
         <div class="notice" id="agentWarn" hidden></div>
         <div class="plexnow" id="plexNow"></div>
         <div class="pickbar">
@@ -617,6 +634,16 @@
   </section>
 </main>
 
+<footer class="footer" aria-label="About">
+  <div class="wrap">
+    <span>Mediux for Plex <b id="footVersion">…</b></span>
+    <span id="footUpdate" hidden></span>
+    <span class="spacer"></span>
+    <a id="footRepo" href="https://github.com/jjbobzin/plex-plugin-mediux" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://mediux.pro" target="_blank" rel="noopener">Mediux</a>
+  </div>
+</footer>
+
 <div class="savebar" id="savebar">
   <div class="wrap">
     <p class="msg" id="saveMsg" role="status"></p>
@@ -728,7 +755,7 @@ function showTab(name) {
   for (const s of document.querySelectorAll("section.tab")) s.classList.toggle("active", s.id === "tab-" + name);
   if (name === "log") loadLog();
   if (name === "aura") loadAura();
-  if (name === "sets") { loadPicks(); if (!libData) loadLibrary(false); }
+  if (name === "sets") { loadPicks(); libraryOnce(); }
   history.replaceState(null, "", "#" + name);
 }
 for (const b of tabs) b.onclick = () => showTab(b.dataset.tab);
@@ -799,7 +826,7 @@ function fill(s) {
   $("notifyUpdates").checked = !!s.notify_updates;
   $("notifyNew").checked = !!s.notify_new_items;
   $("replaceLocked").checked = !!s.replace_locked;
-  $("versionLine").textContent = "Artwork provider · " + s.version;
+  $("versionLine").textContent = "Artwork provider · " + s.version.replace(/^main-/, "").slice(0, 7);
   renderCreators(); renderExcluded(); renderServers();
   dirty = false;
   $("savebar").classList.remove("show");
@@ -1192,8 +1219,80 @@ async function findSets(type, q) {
     loadPlexNow();
   } catch (e) { say($("setsMsg"), e.message, false); }
 }
-$("setsBtn").onclick = () => findSets($("setsType").value, $("setsQ").value.trim());
-$("setsQ").addEventListener("keydown", (e) => { if (e.key === "Enter") $("setsBtn").click(); });
+// openTitle shows one title's sets, by its exact ID, with its name in the box.
+let libScrollY = 0;
+function openTitle(t) {
+  if ($("setsResult").hidden) libScrollY = window.scrollY; // only when leaving the grid
+  $("setsType").value = t.type;
+  $("setsQ").value = t.title || t.tmdb;
+  hideTitleSuggest();
+  findSets(t.type, t.tmdb);
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+function closeTitle() {
+  setsData = null;
+  $("setsResult").hidden = true; $("setsOthers").hidden = true;
+  say($("setsMsg"), ""); $("setsQ").value = "";
+}
+$("closeTitle").onclick = closeTitle;
+$("backToLibrary").onclick = () => { closeTitle(); window.scrollTo({ top: libScrollY || $("libraryCard").offsetTop, behavior: "smooth" }); };
+
+// Live search: matches come from the library already loaded in this page,
+// so typing never calls the server; Mediux is searched only on request.
+let suggestTimer, suggestIndex = -1;
+function hideTitleSuggest() { $("setsSuggest").style.display = "none"; $("setsQ").setAttribute("aria-expanded", "false"); suggestIndex = -1; }
+function titleMatches(q) {
+  if (!libData || !q) return [];
+  const starts = [], within = [];
+  for (const it of libData.items) {
+    const i = it._n.indexOf(q);
+    if (i === 0) starts.push(it); else if (i > 0) within.push(it);
+    if (starts.length >= 8) break;
+  }
+  return starts.concat(within).slice(0, 8);
+}
+function showTitleSuggest() {
+  const raw = $("setsQ").value.trim(), box = $("setsSuggest");
+  box.innerHTML = ""; suggestIndex = -1;
+  if (!raw) { hideTitleSuggest(); return; }
+  for (const it of titleMatches(normTitleJS(raw))) {
+    box.append(el("button", { type: "button", role: "option", onclick: () => openTitle(it) },
+      it.title + (it.year ? " (" + it.year + ")" : ""),
+      el("span", { class: "sub", text: (it.type === "movie" ? "Movie" : "TV") + " · " + libLibrariesOf(it).join(", ") })));
+  }
+  box.append(el("button", { type: "button", role: "option", onclick: () => { hideTitleSuggest(); findSets($("setsType").value, raw); } },
+    "Search Mediux for “" + raw + "”", el("span", { class: "sub", text: $("setsType").value === "movie" ? "movies" : "TV shows" })));
+  box.style.display = "block";
+  $("setsQ").setAttribute("aria-expanded", "true");
+}
+$("setsQ").addEventListener("input", () => {
+  clearTimeout(suggestTimer);
+  $("setsSuggest").innerHTML = ""; hideTitleSuggest(); // never act on matches for older text
+  if (!libData) libraryOnce().then(() => { if ($("setsQ").value.trim()) showTitleSuggest(); });
+  suggestTimer = setTimeout(showTitleSuggest, 120);
+});
+$("setsQ").addEventListener("keydown", (e) => {
+  const opts = [...$("setsSuggest").querySelectorAll("button")];
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (!opts.length) return;
+    e.preventDefault();
+    suggestIndex = (suggestIndex + (e.key === "ArrowDown" ? 1 : -1) + opts.length) % opts.length;
+    opts.forEach((o, i) => o.classList.toggle("active", i === suggestIndex));
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (!opts.length && $("setsQ").value.trim()) { // typed faster than the list updated
+      clearTimeout(suggestTimer); showTitleSuggest();
+      const fresh = [...$("setsSuggest").querySelectorAll("button")];
+      (fresh.length > 1 ? fresh[0] : $("setsBtn")).click();
+      return;
+    }
+    if (suggestIndex >= 0 && opts[suggestIndex]) opts[suggestIndex].click();
+    else if (opts.length > 1) opts[0].click(); // best library match
+    else $("setsBtn").click();
+  } else if (e.key === "Escape") hideTitleSuggest();
+});
+$("setsBtn").onclick = () => { hideTitleSuggest(); findSets($("setsType").value, $("setsQ").value.trim()); };
+document.addEventListener("click", (e) => { if (!e.target.closest("#setsSearch")) hideTitleSuggest(); });
 
 function creatorOf(id) { const s = setsData.sets.find((x) => x.id === id); return s ? s.creator : "?"; }
 function renderSummary() {
@@ -1348,7 +1447,7 @@ async function loadPicks() {
 const picksPager = makePager("picks", $("pickRows"), 3, (p) => {
   const name = (p.title || "TMDB " + p.tmdb) + (p.year ? " (" + p.year + ")" : "");
   const open = el("button", { type: "button", text: "Open", onclick: () => {
-    $("setsType").value = p.type; $("setsQ").value = p.tmdb; findSets(p.type, p.tmdb); window.scrollTo({ top: 0, behavior: "smooth" });
+    openTitle(p);
   } });
   const rm = el("button", { type: "button", class: "danger", text: "Remove", onclick: async () => {
     try { await api("/api/picks", { method: "POST", body: JSON.stringify(Object.assign({ type: p.type, tmdb: p.tmdb, title: p.title, year: p.year || 0 }, emptyPick())) }); loadPicks(); }
@@ -1412,7 +1511,7 @@ function reviewCard(it) {
     el("div", { class: "pair" }, el("figure", {}, now, el("figcaption", { text: "In Plex now" })), el("figure", { class: "mine" }, mine, mineCap)),
     el("div", { class: "acts" },
       el("button", { type: "button", class: "primary", text: "Approve", onclick: () => reviewAction("/api/review/approve", [reviewTitle(it)], null, msg) }),
-      el("button", { type: "button", text: "Choose another", onclick: () => { $("setsType").value = it.type; $("setsQ").value = it.tmdb; findSets(it.type, it.tmdb); window.scrollTo({ top: 0, behavior: "smooth" }); } }),
+      el("button", { type: "button", text: "Choose another", onclick: () => openTitle(it) }),
       it.keep_plex
         ? el("button", { type: "button", class: "ghost", text: "Undo keep Plex art", onclick: () => reviewAction("/api/review/keep-plex", [reviewTitle(it)], { keep: false }, msg) })
         : el("button", { type: "button", class: "ghost", text: "Keep Plex art", onclick: () => reviewAction("/api/review/keep-plex", [reviewTitle(it)], { keep: true }, msg) })),
@@ -1456,21 +1555,26 @@ const libPager = makePager("library", $("libGrid"), 1, (it) => {
   if (needsReview(it) && libData.apply_mode === "approved") badges.append(el("span", { class: "badge warn", text: "To review" }));
   if (it.art == null) badges.append(el("span", { class: "badge", text: (libData.availability || {}).running ? "Checking Mediux…" : "Not checked yet" }));
   else if (it.art === 0) badges.append(el("span", { class: "badge", text: "No Mediux art" }));
-  else badges.append(el("span", { class: "badge auto", text: plural(it.art, "Mediux image", "Mediux images") }));
-  if (!it.places.some((p) => p.custom)) badges.append(el("span", { class: "badge warn", text: "Not on a Mediux agent" }));
+  else badges.append(el("span", { class: "badge auto", text: plural(it.art, "image", "images") }));
+  if (!it.places.some((p) => p.custom)) badges.append(el("span", { class: "badge warn", title: "None of the libraries holding this title use a Mediux agent", text: "No Mediux agent" }));
   const meta = [it.year, libLibrariesOf(it).join(", ")].filter(Boolean).join(" · ");
   return el("button", { type: "button", class: "libcard", title: it.places.map((p) => p.server + " · " + p.library).join("\n"),
-    onclick: () => {
-      $("setsType").value = it.type; $("setsQ").value = it.tmdb;
-      findSets(it.type, it.tmdb);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    } }, art, el("div", { class: "body" }, el("div", { class: "t", text: it.title }), el("div", { class: "m", text: meta }), badges));
+    onclick: () => openTitle(it) }, art, el("div", { class: "body" }, el("div", { class: "t", text: it.title }), el("div", { class: "m", text: meta }), badges));
 }, () => (libData && libData.items.length ? (reviewMode() ? "Nothing left to review here." : "No titles match these filters.") : "Nothing loaded yet."), fillChoices);
+
+// libraryOnce loads the library if it isn't loaded, sharing one request.
+let libLoading = null;
+function libraryOnce() {
+  if (libData) return Promise.resolve();
+  if (!libLoading) libLoading = loadLibrary(false).finally(() => { libLoading = null; });
+  return libLoading;
+}
 
 async function loadLibrary(refresh) {
   $("libStatus").textContent = refresh ? "Reading your Plex libraries…" : "Loading…";
   try { libData = await api("/api/library" + (refresh ? "?refresh=1" : "")); }
   catch (e) { $("libStatus").textContent = e.message; return; }
+  for (const it of libData.items || []) it._n = normTitleJS(it.title); // once, not per keystroke
   if (!libData.configured) {
     $("libStatus").textContent = "Sign in with Plex on the Watch & notify tab to see your library here.";
     libData.items = []; renderLibrary(false); return;
@@ -1521,7 +1625,7 @@ function renderLibrary(keepPage) {
   const q = normTitleJS($("libSearch").value), art = $("libArt").value, pick = $("libPick").value, agent = $("libAgent").value;
   let items = libData.items.filter((it) => {
     if (libSelected.size && !libLibrariesOf(it).some((l) => libSelected.has(l))) return false;
-    if (q && !normTitleJS(it.title).includes(q)) return false;
+    if (q && !it._n.includes(q)) return false;
     if (art === "has" && !(it.art > 0)) return false;
     if (art === "none" && it.art !== 0) return false;
     if (art === "unknown" && it.art != null) return false;
@@ -1537,8 +1641,8 @@ function renderLibrary(keepPage) {
     return true;
   });
   const sort = $("libSort").value;
-  items = items.slice().sort((a, b) => sort === "title" ? normTitleJS(a.title).localeCompare(normTitleJS(b.title))
-    : sort === "year" ? (b.year || 0) - (a.year || 0) || normTitleJS(a.title).localeCompare(normTitleJS(b.title))
+  items = items.slice().sort((a, b) => sort === "title" ? (a._n < b._n ? -1 : a._n > b._n ? 1 : 0)
+    : sort === "year" ? (b.year || 0) - (a.year || 0) || (a._n < b._n ? -1 : a._n > b._n ? 1 : 0)
     : b.added - a.added);
   $("libGrid").classList.toggle("review", reviewMode());
   $("bulkBar").hidden = !reviewMode();
@@ -1574,7 +1678,8 @@ for (const id of ["libArt", "libPick", "libAgent", "libSort"]) {
   try { const v = recall("lib:" + id); if (v !== null) $(id).value = v; } catch (_) {}
   $(id).onchange = () => { remember("lib:" + id, $(id).value); renderLibrary(false); };
 }
-$("libSearch").addEventListener("input", () => renderLibrary(false));
+let libSearchTimer;
+$("libSearch").addEventListener("input", () => { clearTimeout(libSearchTimer); libSearchTimer = setTimeout(() => renderLibrary(false), 150); });
 $("libRefresh").onclick = () => loadLibrary(true);
 $("libReset").onclick = () => {
   libSelected.clear(); remember("libLibraries", "[]");
@@ -1618,7 +1723,31 @@ function renderLog(keepPage) {
 $("logFilter").onchange = () => renderLog(false);
 $("refreshLog").onclick = loadLog;
 
+/* ---------- footer ---------- */
+async function loadVersion() {
+  let v;
+  try { v = await api("/api/version"); } catch (_) { return; }
+  $("footVersion").textContent = v.short || v.version;
+  $("footVersion").title = v.version;
+  const box = $("footUpdate");
+  box.textContent = "";
+  box.className = "";
+  if (v.update_available) {
+    box.className = "update";
+    box.append("Update available (" + v.latest + ", built " + new Date(v.latest_built).toLocaleDateString() + ") · ",
+      el("a", { href: v.repo + "#updating", target: "_blank", rel: "noopener", text: "How to update" }));
+  } else if (v.latest && v.latest === v.short) {
+    box.textContent = "Up to date";
+  } else if (v.check_error) {
+    box.textContent = "Couldn't check for updates";
+    box.title = v.check_error;
+  }
+  box.hidden = !box.textContent;
+}
+
 /* ---------- start ---------- */
+loadVersion();
+setInterval(loadVersion, 6 * 60 * 60 * 1000);
 api("/api/settings").then(fill).catch((e) => { $("savebar").classList.add("show"); say($("saveMsg"), e.message, false); });
 refreshStatus();
 setInterval(refreshStatus, 20000);

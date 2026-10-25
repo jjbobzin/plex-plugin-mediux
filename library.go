@@ -69,6 +69,12 @@ func (ui *webUI) library(w http.ResponseWriter, r *http.Request) {
 		if built.IsZero() || idx.built.Before(built) {
 			built = idx.built
 		}
+		// Agents can change at any time (you just switched a library), so
+		// read them fresh; the title list itself can be hours old.
+		live, err := ui.plex.customSections(ctx, srv)
+		if err != nil {
+			problems = append(problems, err.Error())
+		}
 		for key, refs := range idx.items {
 			for _, ref := range refs {
 				it := byKey[key]
@@ -80,12 +86,16 @@ func (ui *webUI) library(w http.ResponseWriter, r *http.Request) {
 				if ref.AddedAt > it.Added {
 					it.Added = ref.AddedAt
 				}
+				custom := ref.Custom
+				if c, ok := live[ref.Section]; ok {
+					custom = c
+				}
 				// Prefer the poster from a Mediux-agent library: that's the
 				// copy your picks change.
-				if ref.Thumb != "" && (it.Poster == "" || ref.Custom && !anyCustom(it.Places)) {
+				if ref.Thumb != "" && (it.Poster == "" || custom && !anyCustom(it.Places)) {
 					it.Poster = plexImageURL(i, ref.Thumb, 200, 300)
 				}
-				it.Places = append(it.Places, libraryPlace{srv.Name, ref.Library, ref.Custom})
+				it.Places = append(it.Places, libraryPlace{srv.Name, ref.Library, custom})
 			}
 		}
 	}

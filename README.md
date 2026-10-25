@@ -65,6 +65,19 @@ keeps using the local `http://<server-ip>:38600/...` addresses either way.
 Posters you uploaded or locked in Plex, for example through AURA or Kometa, are
 never replaced.
 
+## Updating
+
+The settings page footer says when a newer version is published. Containers
+deployed as a stack (Dockhand, Portainer, Compose) don't show up in Unraid's
+own update check. To update:
+
+```bash
+docker pull ghcr.io/jjbobzin/plex-plugin-mediux:latest
+```
+
+Then recreate the stack (in Dockhand: a full recreate, not just a restart).
+The footer then shows the new version. Your settings are kept.
+
 ## Credits
 
 Artwork selection is adapted from

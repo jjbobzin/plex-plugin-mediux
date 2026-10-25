@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -1203,5 +1204,40 @@ func TestSavingSettingsKeepsFieldsNotSent(t *testing.T) {
 	s := h.store.get()
 	if s.ApplyMode != "approved" || s.WatchHours != 6 || s.CacheHours != 3 || s.Token != "good-token" {
 		t.Fatalf("fields not sent must keep their values: %+v", s)
+	}
+}
+
+func TestFooterReportsUpdates(t *testing.T) {
+	newRev := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	reg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/token":
+			_ = json.NewEncoder(w).Encode(map[string]any{"token": "anon"})
+		case strings.HasSuffix(r.URL.Path, "/manifests/latest"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"manifests": []any{
+				map[string]any{"digest": "sha256:img", "platform": map[string]any{"os": "linux", "architecture": runtime.GOARCH}}}})
+		case strings.HasSuffix(r.URL.Path, "/manifests/sha256:img"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"config": map[string]any{"digest": "sha256:cfg"}})
+		case strings.HasSuffix(r.URL.Path, "/blobs/sha256:cfg"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"config": map[string]any{"Labels": map[string]any{
+				"org.opencontainers.image.revision": newRev, "org.opencontainers.image.created": "2026-10-25T06:02:54Z"}}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(reg.Close)
+	old := version
+	t.Cleanup(func() { version = old })
+
+	h := newHarness(t, nil)
+	h.app.updates().registry = reg.URL
+	version = "main-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	v := h.get(t, "/api/version")
+	if v["update_available"] != true || v["latest"] != "bbbbbbb" || v["short"] != "aaaaaaa" {
+		t.Fatalf("an older build should see the update: %v", v)
+	}
+	version = "main-" + newRev
+	if v := h.get(t, "/api/version"); v["update_available"] != false {
+		t.Fatalf("the latest build is up to date: %v", v)
 	}
 }

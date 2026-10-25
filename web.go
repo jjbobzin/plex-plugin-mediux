@@ -25,6 +25,7 @@ type webUI struct {
 	discord      *discord
 	auth         *plexAuth
 	availability *availability
+	updates      *updateChecker
 	activity     *activityLog
 	relay        *http.Client
 	started      time.Time
@@ -36,6 +37,7 @@ func (ui *webUI) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/settings", ui.guard(ui.saveSettings))
 	mux.HandleFunc("POST /api/check", ui.guard(ui.check))
 	mux.HandleFunc("GET /api/status", ui.status)
+	mux.HandleFunc("GET /api/version", ui.versionInfo)
 	mux.HandleFunc("GET /api/creators", ui.creators)
 	mux.HandleFunc("GET /api/activity", ui.recent)
 	mux.HandleFunc("GET /api/preview", ui.preview)

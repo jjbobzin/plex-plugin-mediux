@@ -16,6 +16,7 @@ type app struct {
 	discord  *discord
 	watch    *watcher
 	auth     *plexAuth
+	ui       *webUI
 	mux      *http.ServeMux
 }
 
@@ -30,8 +31,9 @@ func newApp(store *settingsStore, configDir string) *app {
 	a.provider.watch = a.watch
 	a.auth = newPlexAuth(store)
 	ui := &webUI{settings: store, provider: a.provider, plex: a.plexAPI, discord: a.discord, auth: a.auth,
-		availability: loadAvailability(configDir), activity: a.activity,
+		availability: loadAvailability(configDir), updates: newUpdateChecker(), activity: a.activity,
 		relay: &http.Client{Timeout: 60 * time.Second}, started: time.Now()}
+	a.ui = ui
 	a.mux = http.NewServeMux()
 	ui.routes(a.mux)
 	for _, p := range []string{"/movies", "/movies/", "/tv", "/tv/"} {
@@ -39,3 +41,6 @@ func newApp(store *settingsStore, configDir string) *app {
 	}
 	return a
 }
+
+// updates is the footer's update checker (tests point it at a fake registry).
+func (a *app) updates() *updateChecker { return a.ui.updates }
