@@ -19,12 +19,23 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          # The newest patch release, so Go's own security fixes are in.
+          check-latest: true
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test ./...
+      # Rule #2: no image with a known vulnerability in a Go module.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  # Rule #2 deploy gate: the standard security scans run first, and a failing
+  # scan stops the image from being published.
+  scan:
+    uses: LiftbridgeLabs/.github/.github/workflows/security-scan.yml@main
+    secrets:
+      DISCORD_WEBHOOK: ${{ secrets.ALERTS_DISCORD_WEBHOOK }}
 
   image:
-    needs: test
+    needs: [test, scan]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:

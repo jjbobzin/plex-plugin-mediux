@@ -1,0 +1,41 @@
+# Standard security scans (Jason's Rule #2). The scans themselves live in
+# LiftbridgeLabs/.github, .github/workflows/security-scan.yml: secrets
+# (gitleaks) and new or unknown dependencies. The shared workflow has no Go
+# vulnerability audit, so govulncheck (the Go team's own checker) runs here,
+# weekly too, so new advisories against unchanged modules are seen.
+# image.yml runs the same checks first, so a failing one stops an image.
+# Failures alert Discord #alerts.
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Mondays, so new advisories against unchanged dependencies are seen.
+    - cron: "23 14 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    uses: LiftbridgeLabs/.github/.github/workflows/security-scan.yml@main
+    secrets:
+      DISCORD_WEBHOOK: ${{ secrets.ALERTS_DISCORD_WEBHOOK }}
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # The newest patch release, so Go's own security fixes are in.
+          check-latest: true
+      - name: Known vulnerabilities in Go modules (govulncheck)
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
