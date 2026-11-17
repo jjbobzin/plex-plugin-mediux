@@ -7,16 +7,20 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 )
@@ -79,6 +83,10 @@ type mediuxClient struct {
 	endpoint string
 	http     *http.Client
 	sem      chan struct{}
+
+	// noLogos fingerprints the API key Mediux refused the sets' file list
+	// (clear logos) for; artwork is fetched without it while that key is in use.
+	noLogos atomic.Value // string
 
 	mu         sync.Mutex
 	cache      map[string]cacheEntry
@@ -148,9 +156,11 @@ func (c *mediuxClient) queryWithToken(ctx context.Context, token, operation, q s
 		return errors.New("Mediux API response exceeds size limit")
 	}
 	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
+		log.Printf("Mediux rejected the API token (status %d, %s)", res.StatusCode, operation)
 		return fmt.Errorf("Mediux rejected the API token (status %d)", res.StatusCode)
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
+		log.Printf("Mediux API status %d (%s)", res.StatusCode, operation)
 		return fmt.Errorf("Mediux API status %d (%s)", res.StatusCode, operation)
 	}
 	var g struct {
@@ -161,12 +171,24 @@ func (c *mediuxClient) queryWithToken(ctx context.Context, token, operation, q s
 		return err
 	}
 	if len(g.Errors) > 0 {
-		return graphqlError(g.Errors, operation, token)
+		err := graphqlError(g.Errors, operation, token)
+		log.Printf("%v", err)
+		return err
 	}
 	return json.Unmarshal(g.Data, out)
 }
 
-const showQuery = `query($tmdb_id: ID!){shows_by_id(id:$tmdb_id){id show_sets(limit:-1){ id popularity user_created{username} show_poster(limit:-1){id modified_on language{display_name}} show_backdrop(limit:-1){id modified_on language{display_name}} season_posters(limit:-1){ id modified_on language{display_name} season{season_number}} titlecards(limit:-1){id modified_on language{display_name} episode{episode_number season_id{season_number}}} files(limit:-1){ id file_type modified_on language{display_name} }}}}`
+// logoFields asks for each set's clear logos. Mediux can refuse it for an
+// API key (it did for the shared beta key in Nov 2026), so artwork falls
+// back to the queries without it.
+const logoFields = ` files(limit:-1){id file_type modified_on language{display_name}}`
+
+var (
+	showQueryNoLogos  = strings.Replace(showQuery, logoFields, "", 1)
+	movieQueryNoLogos = strings.Replace(movieQuery, logoFields, "", 1)
+)
+
+const showQuery = `query($tmdb_id: ID!){shows_by_id(id:$tmdb_id){id show_sets(limit:-1){ id popularity user_created{username} show_poster(limit:-1){id modified_on language{display_name}} show_backdrop(limit:-1){id modified_on language{display_name}} season_posters(limit:-1){ id modified_on language{display_name} season{season_number}} titlecards(limit:-1){id modified_on language{display_name} episode{episode_number season_id{season_number}}} files(limit:-1){id file_type modified_on language{display_name}}}}}`
 const movieQuery = `query($tmdb_id: ID!){movies_by_id(id:$tmdb_id){id movie_sets(limit:-1){id popularity user_created{username} movie_poster(limit:-1){id modified_on language{display_name}} movie_backdrop(limit:-1){id modified_on language{display_name}} files(limit:-1){id file_type modified_on language{display_name}}} posters(limit:-1,filter:{collection_set:{id:{_nnull:true}}}){id modified_on language{display_name} movie{id} collection_set{id popularity user_created{username} set_title collection_id{collection_name}}} backdrops(limit:-1,filter:{collection_set:{id:{_nnull:true}}}){id modified_on language{display_name} movie{id} collection_set{id popularity user_created{username} set_title collection_id{collection_name}}}}}`
 
 // artwork returns every Mediux set for a movie or show, cached per settings generation.
@@ -230,13 +252,38 @@ func (c *mediuxClient) evictOldestLocked() {
 	delete(c.cache, oldest)
 }
 
+func keyFingerprint(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:8])
+}
+
+func (c *mediuxClient) logosRefused(key string) bool {
+	refused, _ := c.noLogos.Load().(string)
+	return refused != "" && refused == key
+}
+
 func (c *mediuxClient) fetchArtwork(ctx context.Context, typ mediaType, tmdbID string) (bundle, error) {
-	q, op := movieQuery, "movie artwork"
+	q, plain, op := movieQuery, movieQueryNoLogos, "movie artwork"
 	if typ == typeShow {
-		q, op = showQuery, "show artwork"
+		q, plain, op = showQuery, showQueryNoLogos, "show artwork"
 	}
+	token := strings.TrimSpace(c.settings.get().Token)
+	key := keyFingerprint(token)
+	if c.logosRefused(key) {
+		q = plain
+	}
+	vars := map[string]any{"tmdb_id": tmdbID}
 	var data json.RawMessage
-	if err := c.query(ctx, op, q, map[string]any{"tmdb_id": tmdbID}, &data); err != nil {
+	err := c.queryWithToken(ctx, token, op, q, vars, &data)
+	if err != nil && q != plain && strings.Contains(err.Error(), "FORBIDDEN") {
+		// Try once without clear logos; if that works, leave them out while
+		// this key is in use.
+		if err = c.queryWithToken(ctx, token, op, plain, vars, &data); err == nil {
+			c.noLogos.Store(key)
+			log.Printf("Mediux refuses clear logos for this API key; fetching artwork without them while it's in use")
+		}
+	}
+	if err != nil {
 		return bundle{}, err
 	}
 	return parseBundle(data, typ, tmdbID)

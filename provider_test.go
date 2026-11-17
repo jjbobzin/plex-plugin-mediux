@@ -28,6 +28,10 @@ func asset(n int) map[string]any {
 // had just uploaded it.
 var extraCard atomic.Bool
 
+// forbidFiles makes the fake Mediux refuse each set's file list, as the real
+// one began doing for the shared beta key in Nov 2026.
+var forbidFiles atomic.Bool
+
 // fakeMediux answers the GraphQL queries the provider sends.
 func fakeMediux(t *testing.T) *httptest.Server {
 	movie := map[string]any{"movies_by_id": map[string]any{
@@ -85,6 +89,11 @@ func fakeMediux(t *testing.T) *httptest.Server {
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
+		if forbidFiles.Load() && strings.Contains(body.Query, "files(") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"errors": []any{map[string]any{
+				"message": "You don't have permission to access this.", "extensions": map[string]any{"code": "FORBIDDEN"}}}})
+			return
+		}
 		var data any
 		switch {
 		case strings.Contains(body.Query, "movies_by_id"):
@@ -1279,5 +1288,25 @@ func TestFooterReportsUpdates(t *testing.T) {
 	version = "main-" + newRev
 	if v := h.get(t, "/api/version"); v["update_available"] != false {
 		t.Fatalf("the latest build is up to date: %v", v)
+	}
+}
+
+func TestArtworkWorksWhenMediuxRefusesLogos(t *testing.T) {
+	h := newHarness(t, nil)
+	forbidFiles.Store(true)
+	t.Cleanup(func() { forbidFiles.Store(false) })
+	movie := metadata(t, h.get(t, "/movies/library/metadata/tmdb-291870"))[0]
+	if assetOf(movie["thumb"]) != uuid(3) {
+		t.Fatalf("artwork should still come through without logos: %v", movie["thumb"])
+	}
+	s1 := metadata(t, h.get(t, "/tv/library/metadata/tmdb-194764-s1"))[0]
+	if s1["thumb"] == nil {
+		t.Errorf("a show's art should still come through without logos: %v", s1)
+	}
+	if !h.app.mediux.logosRefused(keyFingerprint("good-token")) {
+		t.Error("after one refusal, logos should stay off for that key")
+	}
+	if h.app.mediux.logosRefused(keyFingerprint("another-key")) {
+		t.Error("a different key should be asked for logos again")
 	}
 }
