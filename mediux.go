@@ -181,6 +181,21 @@ func (c *mediuxClient) queryWithToken(ctx context.Context, token, operation, q s
 // logoFields asks for each set's clear logos. Mediux can refuse it for an
 // API key (it did for the shared beta key in Nov 2026), so artwork falls
 // back to the queries without it.
+// Titles are looked up with a filter ("shows whose id is …"), named like the
+// old shows_by_id lookups. Mediux answers a by-id lookup for a title it
+// doesn't have with FORBIDDEN (since Nov 2026); a filter just finds nothing.
+// Results come back as a list; firstOf takes the one item.
+func firstOf(raw json.RawMessage) json.RawMessage {
+	var list []json.RawMessage
+	if json.Unmarshal(raw, &list) != nil {
+		return raw // already a single item (or null)
+	}
+	if len(list) == 0 {
+		return json.RawMessage("null")
+	}
+	return list[0]
+}
+
 const logoFields = ` files(limit:-1){id file_type modified_on language{display_name}}`
 
 var (
@@ -188,8 +203,8 @@ var (
 	movieQueryNoLogos = strings.Replace(movieQuery, logoFields, "", 1)
 )
 
-const showQuery = `query($tmdb_id: ID!){shows_by_id(id:$tmdb_id){id show_sets(limit:-1){ id popularity user_created{username} show_poster(limit:-1){id modified_on language{display_name}} show_backdrop(limit:-1){id modified_on language{display_name}} season_posters(limit:-1){ id modified_on language{display_name} season{season_number}} titlecards(limit:-1){id modified_on language{display_name} episode{episode_number season_id{season_number}}} files(limit:-1){id file_type modified_on language{display_name}}}}}`
-const movieQuery = `query($tmdb_id: ID!){movies_by_id(id:$tmdb_id){id movie_sets(limit:-1){id popularity user_created{username} movie_poster(limit:-1){id modified_on language{display_name}} movie_backdrop(limit:-1){id modified_on language{display_name}} files(limit:-1){id file_type modified_on language{display_name}}} posters(limit:-1,filter:{collection_set:{id:{_nnull:true}}}){id modified_on language{display_name} movie{id} collection_set{id popularity user_created{username} set_title collection_id{collection_name}}} backdrops(limit:-1,filter:{collection_set:{id:{_nnull:true}}}){id modified_on language{display_name} movie{id} collection_set{id popularity user_created{username} set_title collection_id{collection_name}}}}}`
+const showQuery = `query($tmdb_id: String!){shows_by_id: shows(filter:{id:{_eq:$tmdb_id}},limit:1){id show_sets(limit:-1){ id popularity user_created{username} show_poster(limit:-1){id modified_on language{display_name}} show_backdrop(limit:-1){id modified_on language{display_name}} season_posters(limit:-1){ id modified_on language{display_name} season{season_number}} titlecards(limit:-1){id modified_on language{display_name} episode{episode_number season_id{season_number}}} files(limit:-1){id file_type modified_on language{display_name}}}}}`
+const movieQuery = `query($tmdb_id: String!){movies_by_id: movies(filter:{id:{_eq:$tmdb_id}},limit:1){id movie_sets(limit:-1){id popularity user_created{username} movie_poster(limit:-1){id modified_on language{display_name}} movie_backdrop(limit:-1){id modified_on language{display_name}} files(limit:-1){id file_type modified_on language{display_name}}} posters(limit:-1,filter:{collection_set:{id:{_nnull:true}}}){id modified_on language{display_name} movie{id} collection_set{id popularity user_created{username} set_title collection_id{collection_name}}} backdrops(limit:-1,filter:{collection_set:{id:{_nnull:true}}}){id modified_on language{display_name} movie{id} collection_set{id popularity user_created{username} set_title collection_id{collection_name}}}}}`
 
 // artwork returns every Mediux set for a movie or show, cached per settings generation.
 func (c *mediuxClient) artwork(ctx context.Context, typ mediaType, tmdbID string) (bundle, error) {
@@ -306,6 +321,10 @@ func parseBundle(raw json.RawMessage, typ mediaType, expectedID string) (bundle,
 	if typ == typeShow {
 		key, setsKey = "shows_by_id", "show_sets"
 	}
+	if root == nil { // Mediux answered "data": null
+		return bundle{}, nil
+	}
+	root[key] = firstOf(root[key])
 	if len(root[key]) == 0 || string(root[key]) == "null" {
 		return bundle{}, nil
 	}
@@ -704,7 +723,7 @@ func (c *mediuxClient) showStructure(ctx context.Context, tmdbID string) (map[in
 	}
 	structureMu.Unlock()
 	var out struct {
-		Show *struct {
+		Shows []struct {
 			Seasons []struct {
 				Number   int `json:"season_number"`
 				Episodes []struct {
@@ -713,11 +732,11 @@ func (c *mediuxClient) showStructure(ctx context.Context, tmdbID string) (map[in
 			} `json:"seasons"`
 		} `json:"shows_by_id"`
 	}
-	q := `query($tmdb_id: ID!){shows_by_id(id:$tmdb_id){seasons(limit:-1){season_number episodes(limit:-1){episode_number}}}}`
+	q := `query($tmdb_id: String!){shows_by_id: shows(filter:{id:{_eq:$tmdb_id}},limit:1){seasons(limit:-1){season_number episodes(limit:-1){episode_number}}}}`
 	err := c.query(ctx, "show structure", q, map[string]any{"tmdb_id": tmdbID}, &out)
 	seasons := map[int][]int{}
-	if err == nil && out.Show != nil {
-		for _, s := range out.Show.Seasons {
+	if err == nil && len(out.Shows) > 0 {
+		for _, s := range out.Shows[0].Seasons {
 			for _, e := range s.Episodes {
 				seasons[s.Number] = append(seasons[s.Number], e.Number)
 			}
@@ -745,16 +764,17 @@ func (c *mediuxClient) titleOf(ctx context.Context, typ mediaType, tmdbID string
 	if typ == typeShow {
 		field, date = "shows_by_id", "first_air_date"
 	}
-	var out map[string]*struct {
+	var out map[string][]struct {
 		Title string `json:"title"`
 		Movie string `json:"release_date"`
 		Show  string `json:"first_air_date"`
 	}
-	q := "query($id: ID!){" + field + "(id:$id){title " + date + "}}"
-	if err := c.query(ctx, "title lookup", q, map[string]any{"id": tmdbID}, &out); err != nil || out[field] == nil {
+	collection := strings.TrimSuffix(field, "_by_id")
+	q := "query($id: String!){" + field + ": " + collection + "(filter:{id:{_eq:$id}},limit:1){title " + date + "}}"
+	if err := c.query(ctx, "title lookup", q, map[string]any{"id": tmdbID}, &out); err != nil || len(out[field]) == 0 {
 		return "", 0
 	}
-	t := out[field]
+	t := out[field][0]
 	return t.Title, yearOf(t.Movie + t.Show)
 }
 
@@ -797,12 +817,12 @@ func (c *mediuxClient) collectionMovies(ctx context.Context, setID string) ([]co
 		} `json:"movie"`
 	}
 	var out struct {
-		Set *struct {
+		Sets []struct {
 			Posters   []file `json:"movie_posters"`
 			Backdrops []file `json:"movie_backdrops"`
 		} `json:"collection_sets_by_id"`
 	}
-	q := `query($id: ID!){collection_sets_by_id(id:$id){movie_posters(limit:-1){id modified_on movie{id title release_date}} movie_backdrops(limit:-1){id modified_on movie{id title release_date}}}}`
+	q := `query($id: GraphQLStringOrFloat!){collection_sets_by_id: collection_sets(filter:{id:{_eq:$id}},limit:1){movie_posters(limit:-1){id modified_on movie{id title release_date}} movie_backdrops(limit:-1){id modified_on movie{id title release_date}}}}`
 	if err := c.query(ctx, "collection set", q, map[string]any{"id": setID}, &out); err != nil {
 		return nil, err
 	}
@@ -831,11 +851,12 @@ func (c *mediuxClient) collectionMovies(ctx context.Context, setID string) ([]co
 			}
 		}
 	}
-	if out.Set != nil {
-		for _, f := range out.Set.Posters {
+	if len(out.Sets) > 0 {
+		set := out.Sets[0]
+		for _, f := range set.Posters {
 			add(f, true)
 		}
-		for _, f := range out.Set.Backdrops {
+		for _, f := range set.Backdrops {
 			add(f, false)
 		}
 	}

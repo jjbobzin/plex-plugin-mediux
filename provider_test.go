@@ -89,6 +89,14 @@ func fakeMediux(t *testing.T) *httptest.Server {
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
+		// Like real Mediux since Nov 2026: a by-id lookup of a title it
+		// doesn't have is refused. The provider looks titles up with a filter
+		// instead, so any by-id lookup here is a mistake.
+		if strings.Contains(body.Query, "_by_id(") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"errors": []any{map[string]any{
+				"message": "You don't have permission to access this.", "extensions": map[string]any{"code": "FORBIDDEN"}}}})
+			return
+		}
 		if forbidFiles.Load() && strings.Contains(body.Query, "files(") {
 			_ = json.NewEncoder(w).Encode(map[string]any{"errors": []any{map[string]any{
 				"message": "You don't have permission to access this.", "extensions": map[string]any{"code": "FORBIDDEN"}}}})
@@ -102,7 +110,7 @@ func fakeMediux(t *testing.T) *httptest.Server {
 			} else {
 				data = map[string]any{"movies_by_id": nil}
 			}
-		case strings.Contains(body.Query, "shows_by_id(id:$tmdb_id){seasons"):
+		case strings.Contains(body.Query, "limit:1){seasons"):
 			data = structure
 		case strings.Contains(body.Query, "shows_by_id"):
 			// Answer for whichever show was asked about.
@@ -159,6 +167,21 @@ func fakeMediux(t *testing.T) *httptest.Server {
 			data = map[string]any{"contributors": []any{map[string]any{"username": "willtong93"}}}
 		default:
 			t.Errorf("unexpected query %s", body.Query)
+		}
+		// Filtered lookups answer with a list: one item, or none.
+		if m, ok := data.(map[string]any); ok {
+			wrapped := map[string]any{} // fresh: the sample data is shared
+			for k, v := range m {
+				switch {
+				case !strings.HasSuffix(k, "_by_id"):
+					wrapped[k] = v
+				case v == nil:
+					wrapped[k] = []any{}
+				default:
+					wrapped[k] = []any{v}
+				}
+			}
+			data = wrapped
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
 	}))
@@ -1308,5 +1331,25 @@ func TestArtworkWorksWhenMediuxRefusesLogos(t *testing.T) {
 	}
 	if h.app.mediux.logosRefused(keyFingerprint("another-key")) {
 		t.Error("a different key should be asked for logos again")
+	}
+}
+
+func TestTitleMissingFromMediuxIsNotAnError(t *testing.T) {
+	h := newHarness(t, nil)
+	// Mediux refuses a by-id lookup for a title it doesn't have; the
+	// provider must find no sets, not fail.
+	b, err := h.app.mediux.artwork(context.Background(), typeMovie, "999999")
+	if err != nil {
+		t.Fatalf("a title Mediux doesn't have should not be an error: %v", err)
+	}
+	if len(b.Sets) != 0 {
+		t.Errorf("want no sets, got %d", len(b.Sets))
+	}
+}
+
+func TestNullArtworkAnswerIsEmpty(t *testing.T) {
+	b, err := parseBundle(json.RawMessage("null"), typeShow, "1")
+	if err != nil || len(b.Sets) != 0 {
+		t.Errorf("a null answer should mean no sets: %v %v", b, err)
 	}
 }
