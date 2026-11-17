@@ -1379,7 +1379,6 @@ function renderSummary() {
 function renderSets() {
   const box = $("setCards"), auto = setsData.auto || {};
   box.innerHTML = "";
-  renderSummary();
   for (const set of setsData.sets) {
     const head = el("div", { class: "head" }, el("span", { class: "who", text: set.creator || "Unknown creator" }));
     if (set.favorite) head.append(el("span", { class: "badge fav", text: "Favorite #" + set.favorite }));
@@ -1412,14 +1411,18 @@ function renderSets() {
     const parts = el("div", { class: "parts" });
     const offered = PARTS.filter(([k]) => has[k]);
     for (const [k, label] of offered) {
-      const on = staged[k] === set.id;
-      parts.append(el("button", { type: "button", "aria-pressed": String(on), text: (on ? "✓ " : "Use for ") + label.toLowerCase(),
-        onclick: () => { staged[k] = on ? "" : set.id; renderSets(); } }));
+      const b = el("button", { type: "button", onclick: () => { staged[k] = staged[k] === set.id ? "" : set.id; refreshPicks(); } });
+      b.dataset.part = k; b.dataset.label = label.toLowerCase();
+      parts.append(b);
     }
     if (offered.length > 1) {
-      const all = offered.every(([k]) => staged[k] === set.id);
-      parts.append(el("button", { type: "button", class: "ghost", text: all ? "Unpick whole set" : "Use whole set",
-        onclick: () => { for (const [k] of offered) staged[k] = all ? "" : set.id; renderSets(); } }));
+      const b = el("button", { type: "button", class: "ghost", onclick: () => {
+        const all = offered.every(([k]) => staged[k] === set.id);
+        for (const [k] of offered) staged[k] = all ? "" : set.id;
+        refreshPicks();
+      } });
+      b.dataset.whole = offered.map(([k]) => k).join(",");
+      parts.append(b);
     }
     if (set.collection && setsData.type === "movie") {
       const holder = el("div", {}, el("div", { class: "striplabel", text: "In this collection" }), el("p", { class: "hint", text: "Loading…" }));
@@ -1429,9 +1432,29 @@ function renderSets() {
         onclick: () => showCollection(card, set) }));
     }
     card.append(parts);
-    if (offered.some(([k]) => staged[k] === set.id)) card.classList.add("chosen");
+    card.dataset.set = set.id;
     box.append(card);
   }
+  refreshPicks();
+}
+// refreshPicks shows the current choices on the set cards already on the
+// page. Choosing a part only changes these buttons: rebuilding the cards
+// would reload every image and make the page jump.
+function refreshPicks() {
+  for (const card of $("setCards").querySelectorAll(".setcard")) {
+    const id = card.dataset.set;
+    let chosen = false;
+    for (const b of card.querySelectorAll("button[data-part]")) {
+      const on = staged[b.dataset.part] === id;
+      chosen = chosen || on;
+      b.setAttribute("aria-pressed", String(on));
+      b.textContent = (on ? "✓ " : "Use for ") + b.dataset.label;
+    }
+    const whole = card.querySelector("button[data-whole]");
+    if (whole) whole.textContent = whole.dataset.whole.split(",").every((k) => staged[k] === id) ? "Unpick whole set" : "Use whole set";
+    card.classList.toggle("chosen", chosen);
+  }
+  renderSummary();
 }
 // Collection lookups are shared between the strip and the apply panel.
 const collectionCache = {};
@@ -1490,8 +1513,8 @@ async function showCollection(card, set) {
   panel.append(el("b", { text: set.collection + " by " + set.creator }), list, buttons, msg);
 }
 
-$("pickReset").onclick = () => { staged = Object.assign(emptyPick(), setsData.pick || {}); renderSets(); say($("pickMsg"), ""); };
-$("pickClear").onclick = () => { staged = emptyPick(); renderSets(); say($("pickMsg"), "All picks cleared here. Save to apply."); };
+$("pickReset").onclick = () => { staged = Object.assign(emptyPick(), setsData.pick || {}); refreshPicks(); say($("pickMsg"), ""); };
+$("pickClear").onclick = () => { staged = emptyPick(); refreshPicks(); say($("pickMsg"), "All picks cleared here. Save to apply."); };
 $("pickSave").onclick = async () => {
   $("pickSave").disabled = true;
   try {
